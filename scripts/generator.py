@@ -155,19 +155,13 @@ def generate_daily_file(challenge_data):
     # The main goal for the project right now. The idea is not wasting time creating the same template daily for git upload
     file_template = f'''"""
 Problem:
-{challenge_data['title']}
-
+    {challenge_data['title']}
 Link:
-{challenge_data['link']}
-
+    {challenge_data['link']}
 Difficulty:
-{challenge_data['difficulty']}
-
+    {challenge_data['difficulty']}
 Topics:
-{topics_str}
-
-Notes:
-- 
+    {topics_str}
 """
 
 {code_block}
@@ -179,22 +173,17 @@ if __name__ == "__main__":
 {"\n".join(test_lines)}
 
 """
-
 Approach 1:
-- 
-
+    - 
 Issue:
-- 
-
+    - 
 Final Approach:
-- 
-
+    - 
 Complexity:
-Time: O()
-Space: O()
-
+    Time: O()
+    Space: O()
 Notes:
-- 
+    - 
 """
 '''
 
