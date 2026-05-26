@@ -29,29 +29,44 @@ The project is currently built as a lightweight local Automation Script (MVP):
 4. **Log**: It registers the problem into a local `leetcode_history.db` file, initializing its status as `PENDING`.
 
 
-## Future Roadmap & Goals
-I plan to evolve this project incrementally as I study:
+###  Phase 1 — Automation & Local Storage
+- [x] Connect to LeetCode GraphQL API
+- [x] Automatic workspace/category generation
+- [x] SQLite metadata tracking
+- [x] Python template generation
+- [x] Automated local test case extraction
 
-* **[x] Phase 1: Local Automation Script & Storage (MVP - Completed)**
-  * Established communication with LeetCode's GraphQL API to extract the daily metadata and code structures.
-  * Developed dynamic workspace separation using Python's `os` and `re` libraries to organize problem categories automatically.
-  * Designed a local schema using SQLite to log basic information (`id`, `title`, `slug`, `link`, `difficulty`, `date`, `category`).
-  * Created an immutable template generator to inject automated syntax-ready test execution blocks in each script.
 
-* **[ ] Phase 2: Behavioral Logging**
-  * Create a terminal script to mark a problem as `SOLVED` or `FAILED`.
-  * Implement tracking metrics: some way to input duration (time spent) and number of submission attempts.
+###  Phase 2 — Behavioral Logging
+- [ ] CLI status management (`PENDING`, `SOLVED`, `FAILED`)
+- [ ] Duration tracking
+- [ ] Submission attempt tracking
 
-* **[ ] Phase 3: Resilient Synchronization (Anti-Gap Logic)**
-  * Update the script to check the last recorded date in the database. If I miss a few days without turning on my PC, the script will fetch the missing daily challenges retroactively to avoid gaps in my historical data.
+---
 
-* **[ ] Phase 4: Dockerization**
-  * Envelop the execution pipeline into a Docker container to decouple the script from my local machine configuration, using Docker Volumes to store the database file safely on the host machine. (I recently started learning about Docker, and I'm eager to use more of this technology).
+###  Phase 3 — Resilient Synchronization
+- [ ] Detect missing challenge dates
+- [ ] Retroactively fetch unsolved daily challenges
+- [ ] Prevent historical data gaps
 
-* **[ ] Phase 5: Cloud Automation (Hands-off Pipeline)**
-  * Deploy the Docker container to **GitHub Actions** with a CRON trigger. The script will run automatically on the cloud every night at 9:00 PM (when LeetCode resets), keeping my database updated even if my computer is turned off.
 
-* **[ ] Phase 6: Analytics & BI Dashboard**
-  * Connect the accumulated SQLite data into a BI tool (Most likely Power BI because it's another tool I'm studying) to analyze metrics like *Average Time Spent per Difficulty*, *Topic Proficiency*, and *Technical Debt Repayment Rate* (how fast I catch up on missed days).
+###  Phase 4 — Dockerization
+- [ ] Containerize the automation pipeline
+- [ ] Persist SQLite database using Docker volumes
+- [ ] Reduce dependency on local machine configuration
+
+
+###  Phase 5 — Cloud Automation
+- [ ] Deploy scheduled execution using GitHub Actions
+- [ ] Run daily synchronization automatically
+- [ ] Keep the database updated without local execution
+
+
+###  Phase 6 — Analytics & BI Dashboard
+- [ ] Connect SQLite data to Power BI
+- [ ] Track solving consistency
+- [ ] Analyze topic proficiency
+- [ ] Measure average solving time by difficulty
+- [ ] Build long-term learning analytics
 
 If you wanna see the results of this repository, check it on: https://github.com/Dev-Yudii/leetcode
