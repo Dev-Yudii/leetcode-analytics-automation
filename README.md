@@ -53,3 +53,5 @@ I plan to evolve this project incrementally as I study:
 
 * **[ ] Phase 6: Analytics & BI Dashboard**
   * Connect the accumulated SQLite data into a BI tool (Most likely Power BI because it's another tool I'm studying) to analyze metrics like *Average Time Spent per Difficulty*, *Topic Proficiency*, and *Technical Debt Repayment Rate* (how fast I catch up on missed days).
+
+If you wanna see the results of this repository, check it on: https://github.com/Dev-Yudii/leetcode
