@@ -216,3 +216,26 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Cache do Python (Arquivos compilados que o Python cria sozinho)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Ambientes Virtuais (Caso você crie um local depois)
+env/
+venv/
+.env/
+
+# Configurações do VS Code (Guarda seu histórico de abas abertas e builds locais)
+.vscode/
+
+# Bancos de dados locais (Apenas por segurança, caso decida gerar algum .db aqui dentro)
+*.db
+*.sqlite3
+
+# Arquivos de sistema (Lixo do Windows/Mac)
+Thumbs.db
+.DS_Store
