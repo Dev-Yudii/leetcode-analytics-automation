@@ -11,7 +11,7 @@ def get_daily_challenge():
             date
             link
             question {
-                questionId
+                questionFrontendId
                 title
                 titleSlug
                 difficulty
@@ -58,7 +58,7 @@ def get_daily_challenge():
 
     # This will be the base for the structure in the python file our script will generate
     formatted_data = {
-        "id": question_info['questionId'],
+        "id": question_info['questionFrontendId'],
         "date": raw_data['date'],
         "title": question_info['title'],
         "slug": question_info['titleSlug'],

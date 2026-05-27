@@ -1,17 +1,15 @@
 import os
 import re
-import sqlite3
-
-# Adjust paths according to what you want.
+from scripts.db_utils import execute_query
 
 # Discover where generator.py is located (project/scripts)
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Go up two levels to reach the root workspace directory
-DEVELOPER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(CURRENT_DIR)))
+USER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(CURRENT_DIR)))
 
 # Path where problem-solving repository will live
-OUTPUT_BASE_PATH = os.path.join(DEVELOPER_DIR, "Problem-Solving", "LeetCode")
+OUTPUT_BASE_PATH = os.path.join(USER_DIR, "Problem-Solving", "LeetCode")
 
 def clean_html(html_content):
     """Remove HTML tags and fix special characters for the docstring."""
@@ -34,9 +32,9 @@ def extract_inputs(html_content):
     # Connect both arrays.
     test_cases = []
     for i in range(len(inputs)):
-            inp = inputs[i].strip()
-            out = outputs[i].strip() if i < len(outputs) else ""
-            test_cases.append((inp, out))
+        inp = inputs[i].strip()
+        out = outputs[i].strip() if i < len(outputs) else ""
+        test_cases.append((inp, out))
 
     return test_cases
 
@@ -49,16 +47,11 @@ def parse_function_call(code_snippet):
     return "method_name"
 
 def save_to_sqlite(challenge_data, topic_folder):
-    """Save the problem metadata into a local SQLite database file for future BI connection."""
-    db_path = os.path.join(OUTPUT_BASE_PATH, "leetcode_history.db")
+    """Save the problem metadata into a local SQLite database file using db_utils."""
     
-    # Connects to the file (creates it if it doesn't exist)
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    
-    # Create the central log table if it's the first run
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS problems (
+    # Guaranteeing the table exists using the correct professional table name
+    create_table_query = """
+        CREATE TABLE IF NOT EXISTS leetcode_problems (
             id TEXT PRIMARY KEY,
             title TEXT,
             slug TEXT,
@@ -68,14 +61,17 @@ def save_to_sqlite(challenge_data, topic_folder):
             category TEXT,
             status TEXT DEFAULT 'PENDING'
         )
-    """)
+    """
+    execute_query(create_table_query)
     
-    # Insert new problem smoothly, skipping if the ID already exists
+    # Insert new problem smoothly using safe parameterized query
+    insert_query = """
+        INSERT INTO leetcode_problems (id, title, slug, link, difficulty, date_generated, category)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """
+    
     try:
-        cursor.execute("""
-            INSERT INTO problems (id, title, slug, link, difficulty, date_generated, category)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (
+        execute_query(insert_query, (
             challenge_data['id'],
             challenge_data['title'],
             challenge_data['slug'],
@@ -84,18 +80,15 @@ def save_to_sqlite(challenge_data, topic_folder):
             challenge_data['date'],
             topic_folder.upper()
         ))
-        conn.commit()
-        print("📦 Local database leetcode_history.db updated!")
-    except sqlite3.IntegrityError:
-        # ID already exists in database, no actions needed
-        print("ℹ️ Problem already registered in database. Skipping row insertion.")
-    
-    conn.close()
+        print("Local database updated via db_utils!")
+    except Exception:
+        # If the ID already exists, execute_query throws an error because of PRIMARY KEY
+        print("Problem already registered in database. Skipping row insertion.")
 
 def generate_daily_file(challenge_data):
     """Generate the category folder, code file with auto-tests, and update the database."""
     
-    # Define folder name based on first topic or default to general (Maybe in the future we can use subtopics, but let's see how it goes for now)
+    # Define folder name based on first topic or default to general
     if challenge_data['topics']:
         topic_folder = challenge_data['topics'][0].lower().replace(" ", "_")
     else:
@@ -110,7 +103,7 @@ def generate_daily_file(challenge_data):
     filename = f"{challenge_data['id']}_{challenge_data['slug']}.py"
     filepath = os.path.join(target_dir, filename)
     
-    # Prevent overwriting daily code if script runs twice (Cause we will try to automatize it later!)
+    # Prevent overwriting daily code if script runs twice
     if os.path.exists(filepath):
         print(f"File {filename} already exists. Skipping generation.")
         return filepath
@@ -143,7 +136,7 @@ def generate_daily_file(challenge_data):
         test_lines.append("    # No explicit examples found. Add your manual tests below:")
         test_lines.append(f"    # print(solution.{method_name}())")
 
-    # Body will always have a "pass" so it doesn't return identation error;
+    # Body will always have a "pass" so it doesn't return indentation error
     code_block = challenge_data['code_snippet']
     if code_block:
         if code_block.strip().endswith(":"):
@@ -152,7 +145,6 @@ def generate_daily_file(challenge_data):
         code_block = """class Solution:\n    def method_name(self):\n        pass"""
 
     # Build the blueprint layout for daily practice 
-    # The main goal for the project right now. The idea is not wasting time creating the same template daily for git upload
     file_template = f'''"""
 Problem:
     {challenge_data['title']}
@@ -178,7 +170,9 @@ Approach 1:
 Issue:
     - 
 Final Approach:
-    - 
+    - Approach - passed on LeetCode with
+        Runtime - ms Beats -%
+        Memory - MB Beats -%
 Complexity:
     Time: O()
     Space: O()
