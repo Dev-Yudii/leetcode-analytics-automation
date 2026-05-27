@@ -1,7 +1,11 @@
 # Personal LeetCode Automation & Data Pipeline
 
 ## Description
-Automated data pipeline that fetches the LeetCode Daily Challenge via GraphQL, dynamically generates a localized Python workspace with auto-parsed test cases, and logs metadata into a local SQLite database
+Automated data pipeline that fetches the LeetCode Daily Challenge via GraphQL, dynamically generates a localized Python workspace with auto-parsed test cases, and logs metadata into a local SQLite database.
+
+**Looking for the latest updates?** You can follow technical insights and more detailed description about changes and new features in the [CHANGELOG.md](./CHANGELOG.md).
+
+>*If you want to see the **results of this repository**, check it out here: [LeetCode Solutions](https://github.com/Dev-Yudii/leetcode)*
 
 
 ## About This Project
@@ -68,5 +72,3 @@ The project is currently built as a lightweight local Automation Script (MVP):
 - [ ] Analyze topic proficiency
 - [ ] Measure average solving time by difficulty
 - [ ] Build long-term learning analytics
-
-If you wanna see the results of this repository, check it on: https://github.com/Dev-Yudii/leetcode

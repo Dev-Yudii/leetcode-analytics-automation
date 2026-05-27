@@ -59,7 +59,7 @@ def execute_query(query: str, params: tuple = ()) -> list:
     variables = ("PENDING",)
     """
 if __name__ == "__main__":
-    print("--- Running Generic Database Tool ---")
+    print("Running Database Tool")
 
     my_query = """
         UPDATE problems 
