@@ -1,15 +1,8 @@
 import os
 import re
-from scripts.db_utils import execute_query
+from pathlib import Path
+from scripts.db_utils import execute_query, OUTPUT_BASE_PATH
 
-# Discover where generator.py is located (project/scripts)
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-
-# Go up two levels to reach the root workspace directory
-USER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(CURRENT_DIR)))
-
-# Path where problem-solving repository will live
-OUTPUT_BASE_PATH = os.path.join(USER_DIR, "Problem-Solving", "LeetCode")
 
 def clean_html(html_content):
     """Remove HTML tags and fix special characters for the docstring."""
@@ -45,6 +38,38 @@ def parse_function_call(code_snippet):
     if match:
         return match.group(1)
     return "method_name"
+
+def translate_to_python_syntax(input_str: str) -> str:
+    """
+    Translates LeetCode/JS types to valid Python syntax.
+    Safely turns commas into semicolons outside of brackets for exec().
+    """
+    if not input_str:
+        return ""
+    
+    # Direct translation for booleans and nulls
+    translated = input_str.replace("true", "True").replace("false", "False").replace("null", "None")
+    
+    # Parse string to replace parameter commas with semicolons without breaking lists []
+    parts = []
+    bracket_level = 0
+    current_part = []
+    
+    for char in translated:
+        if char == '[':
+            bracket_level += 1
+        elif char == ']':
+            bracket_level -= 1
+        
+        # If comma is outside brackets, it's a parameter separator -> turn into semicolon
+        if char == ',' and bracket_level == 0:
+            parts.append("".join(current_part).strip())
+            current_part = []
+        else:
+            current_part.append(char)
+            
+    parts.append("".join(current_part).strip())
+    return " ; ".join(parts)
 
 def save_to_sqlite(challenge_data, topic_folder):
     """Save the problem metadata into a local SQLite database file using db_utils."""
@@ -95,18 +120,16 @@ def generate_daily_file(challenge_data):
         topic_folder = "general"
         
     # Build target directory path dynamically
-    target_dir = os.path.join(OUTPUT_BASE_PATH, topic_folder)
-    
-    if not os.path.exists(target_dir):
-        os.makedirs(target_dir)
-        
+    target_dir = OUTPUT_BASE_PATH/topic_folder
     filename = f"{challenge_data['id']}_{challenge_data['slug']}.py"
-    filepath = os.path.join(target_dir, filename)
+    filepath = target_dir/filename
+
+    target_dir.mkdir(parents=True, exist_ok=True)
     
     # Prevent overwriting daily code if script runs twice
-    if os.path.exists(filepath):
+    if filepath.exists():
         print(f"File {filename} already exists. Skipping generation.")
-        return filepath
+        return str(filepath)
 
     cleaned_content = clean_html(challenge_data['content'])
     topics_str = ", ".join(challenge_data['topics'])
@@ -118,18 +141,21 @@ def generate_daily_file(challenge_data):
     # Dynamically build the main test lines block
     test_lines = []
     for i, (test_input, expected_output) in enumerate(raw_inputs, 1):
-        if expected_output:
-            test_lines.append(f"    # Example Input: {test_input}  |  Expected Output: {expected_output}")
-        else:
-            test_lines.append(f"    # Example Input: {test_input}")
+        # Translate types and structural syntax for Python compatibility
+        python_ready_input = translate_to_python_syntax(test_input)
+        python_ready_output = expected_output.replace("true", "True").replace("false", "False").replace("null", "None")
         
-        if "=" in test_input:
-            val = test_input.split("=", 1)[1].strip()
-            test_lines.append(f"    testcase{i} = {val}")
+        test_lines.append(f"    # Example Input: {test_input}  |  Expected Output: {expected_output}")
+        
+        # If input has assignments, use safe execution environment + dictionary unpacking
+        if "=" in python_ready_input:
+            test_lines.append(f"    inputs{i} = {{}}")
+            test_lines.append(f"    exec(\"{python_ready_input}\", {{}}, inputs{i})")
+            test_lines.append(f"    print(f'Test {i} Result:', solution.{method_name}(**inputs{i}), ' | Expected:', '{python_ready_output}')")
         else:
-            test_lines.append(f"    testcase{i} = {test_input}")
+            # Simple fallback for straight scalar parameters
+            test_lines.append(f"    print(f'Test {i} Result:', solution.{method_name}({python_ready_input}), ' | Expected:', '{python_ready_output}')")
             
-        test_lines.append(f"    print(f'Test {i} Result:', solution.{method_name}(testcase{i}))")
         test_lines.append("")
 
     if not test_lines:
@@ -163,7 +189,6 @@ if __name__ == "__main__":
     print("Script generated! Configure your tests below:")
     print("-" * 40)
 {"\n".join(test_lines)}
-
 """
 Approach 1:
     - 
@@ -174,15 +199,15 @@ Final Approach:
         Runtime - ms Beats -%
         Memory - MB Beats -%
 Complexity:
-    Time: O()
-    Space: O()
+    - Time: O()
+    - Space: O()
 Notes:
     - 
 """
 '''
 
     # Write the code template file
-    with open(filepath, "w", encoding="utf-8") as f:
+    with open(str(filepath), "w", encoding="utf-8") as f:
         f.write(file_template)
         
     # Append this problem to our database
@@ -191,4 +216,4 @@ Notes:
     print(f"Category folder guaranteed: {target_dir}")
     print(f"File successfully created: {filepath}")
 
-    return filepath
+    return str(filepath)

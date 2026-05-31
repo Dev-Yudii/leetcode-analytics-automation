@@ -3,6 +3,16 @@ This file goal is tracking the project evolution. I'll use it to note down new f
 
 
 
+## 2026-05-31
+### What's New
+- **Better Test Parser (`generator.py`):** Re-engineered how auto-generated test cases are handled. Instead of using fragile string splitting over the `=` sign (which broke when problems had multiple parameter assignments), the script now dynamically translates LeetCode primitives (`true`, `false`, `null`) to Python syntax and wraps parameters inside an isolated `exec()` environment. It unpacks them directly into the solution method using dictionary unpacking (`**inputs`), handling the multi-variable test cases automatically without syntax errors.
+- **Database utils (`db_utils.py`):** Added structural copy-and-paste query templates (SELECT, UPDATE, DELETE, ALTER) to easily run database operations without rewriting connection logic.
+- **Analytical Schema Expansion:** Executed structural table updates to support upcoming tracking features, expanding the `leetcode_problems` schema with 4 new tracking metrics columns: `start_time` (TEXT), `time_spent_minutes` (INTEGER), `runtime_ms` (INTEGER), and `memory_mb` (REAL).
+### Fixes & Tweaks
+- **Robust Path Management (`pathlib.Path`):** Fully migrated the script architecture from raw string concatenation (`os.path`) to standard `pathlib.Path` objects across `db_utils.py` and `generator.py`. Centralized the base workspace path via `OUTPUT_BASE_PATH` to guarantee the script works perfectly on both Windows and Linux without path errors.
+
+
+
 ## 2026-05-27
 ### What's New
 - **Created a generic DB engine (`db_utils.py`):** Instead of opening and closing database connections inside every separate script, I centralized everything into one generic function that I can use on other scripts on my program. Now, any part of the project can run SQL commands just by passing a single raw string.

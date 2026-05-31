@@ -1,17 +1,17 @@
 import sqlite3
-import os
+from pathlib import Path
 
 # Discover where this script is located (project/scripts)
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+CURRENT_DIR = Path(__file__).resolve().parent
 
 # Go up three levels to reach the root workspace directory (C:\Developer)
-USER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(CURRENT_DIR)))
+USER_DIR = CURRENT_DIR.parents[2]
 
 # Path where problem-solving repository lives
-OUTPUT_BASE_PATH = os.path.join(USER_DIR, "Problem-Solving", "LeetCode")
+OUTPUT_BASE_PATH = USER_DIR/"Problem-Solving"/"LeetCode"
 
 # Target the exact database file inside that folder
-DB_PATH = os.path.join(OUTPUT_BASE_PATH, "leetcode_history.db")
+DB_PATH = OUTPUT_BASE_PATH/"leetcode_history.db"
 
 
 def execute_query(query: str, params: tuple = ()) -> list:
@@ -20,7 +20,7 @@ def execute_query(query: str, params: tuple = ()) -> list:
     Handles connections, transactions, errors, and resource cleanup.
     """
     # Standard database connection setup
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(str(DB_PATH))
     cursor = conn.cursor()
     result = []
 
@@ -59,28 +59,60 @@ def execute_query(query: str, params: tuple = ()) -> list:
     variables = ("PENDING",)
     """
 if __name__ == "__main__":
-    print("Running Database Tool")
+    print("LeetCode Database modifier")
 
+    # Write ANY query here (ALTER, SELECT, UPDATE, DELETE) to run it
     my_query = """
-        UPDATE problems 
-        SET id = '3121' 
-        WHERE id = ?
+        ALTER TABLE leetcode_problems ADD COLUMN memory_mb REAL;
     """
-    variables = (3122,)
+    variables = ()
 
-    # Executing and printing results dynamically
+
     try:
+        print(f"Executing operation...")
         rows = execute_query(my_query, variables)
-        print("Operation done!")
         
-        # If the query returned data (SELECT), print rows
+        # If the query returned data (like a SELECT statement), display the rows
         if rows:
-            print("\n--- Query Results ---")
+            print("\n>>> Query Results:")
             for row in rows:
                 print(row)
         else:
-            # If it was a write operation, notify successful modification
-            print("No rows returned. Database successfully modified.")
-            
+            print(">>> Success! Database modified, no rows returned.")
+
     except Exception as e:
-        print(f"Could not execute the operation... Error: {e}")
+        print(f"\n[ERROR] Operation failed. Details: {e}")
+
+
+""" 
+    # TEMPLATE A: Add new columns Run these one by one if needed
+    my_query = "ALTER TABLE leetcode_problems ADD COLUMN start_time TEXT;"
+    my_query = "ALTER TABLE leetcode_problems ADD COLUMN time_spent_minutes INTEGER;"
+    variables = ()
+
+
+    # TEMPLATE B: Update row values
+    my_query = ""
+        UPDATE leetcode_problems 
+        SET status = ? 
+        WHERE id = ?
+    ""
+    variables = ("SOLVED", "2126")
+
+
+    # TEMPLATE C: Select and view data
+    my_query = ""
+        SELECT id, title, category, status 
+        FROM leetcode_problems 
+        WHERE category = ?
+    ""
+    variables = ("ARRAY",)
+
+
+    # TEMPLATE D: Delete rows
+    my_query = ""
+        DELETE FROM leetcode_problems
+        WHERE id = ?
+    ""
+    variables = ("2126",)
+"""
