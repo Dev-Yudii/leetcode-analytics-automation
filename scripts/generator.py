@@ -1,5 +1,6 @@
 import os
 import re
+from datetime import datetime
 from pathlib import Path
 from scripts.db_utils import execute_query, OUTPUT_BASE_PATH
 
@@ -150,11 +151,11 @@ def generate_daily_file(challenge_data):
         # If input has assignments, use safe execution environment + dictionary unpacking
         if "=" in python_ready_input:
             test_lines.append(f"    inputs{i} = {{}}")
-            test_lines.append(f"    exec(\"{python_ready_input}\", {{}}, inputs{i})")
-            test_lines.append(f"    print(f'Test {i} Result:', solution.{method_name}(**inputs{i}), ' | Expected:', '{python_ready_output}')")
+            test_lines.append(f"    exec({python_ready_input!r}, {{}}, inputs{i})")
+            test_lines.append(f"    print(f'Test {i} Result:', solution.{method_name}(**inputs{i}), ' | Expected:', {python_ready_output!r})")
         else:
             # Simple fallback for straight scalar parameters
-            test_lines.append(f"    print(f'Test {i} Result:', solution.{method_name}({python_ready_input}), ' | Expected:', '{python_ready_output}')")
+            test_lines.append(f"    print(f'Test {i} Result:', solution.{method_name}({python_ready_input}), ' | Expected:', {python_ready_output!r})")
             
         test_lines.append("")
 
@@ -171,14 +172,17 @@ def generate_daily_file(challenge_data):
         code_block = """class Solution:\n    def method_name(self):\n        pass"""
 
     # Build the blueprint layout for daily practice 
+    now = datetime.now().astimezone()
+    offset_h = int(now.utcoffset().total_seconds() // 3600)
+    extracted_on = f"{now:%Y-%m-%d %H:%M} (UTC{offset_h:+d})"
     file_template = f'''"""
-Problem:
+This problem was extracted on {extracted_on} from LeetCode at {challenge_data['link']}.
+You can check the full problem description there.
+Problem Title:
     {challenge_data['title']}
-Link:
-    {challenge_data['link']}
 Difficulty:
     {challenge_data['difficulty']}
-Topics:
+Tags:
     {topics_str}
 """
 
@@ -190,19 +194,8 @@ if __name__ == "__main__":
     print("-" * 40)
 {"\n".join(test_lines)}
 """
-Approach 1:
-    - 
-Issue:
-    - 
-Final Approach:
-    - Approach - passed on LeetCode with
-        Runtime - ms Beats -%
-        Memory - MB Beats -%
-Complexity:
-    - Time: O()
-    - Space: O()
 Notes:
-    - 
+    -
 """
 '''
 
