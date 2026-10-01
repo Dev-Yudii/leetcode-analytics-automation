@@ -3,6 +3,18 @@ This file goal is tracking the project evolution. I'll use it to note down new f
 
 
 
+## 2026-10-02
+### What's New
+- **Collection diagnostics (`leetcode_client.py`, `main.py`):** fetch step now distinguishes missing/null/empty per field with `warnings[]` instead of generic `KeyError`; only a missing `questionFrontendId` blocks the run (identity failure, per architecture §3.1). `main.py` runs in three stages (fetch → topics → generate) with specific messages, and registers topics incrementally into `data/topics.json` without touching persistence.
+- **Safer test generation (`generator.py`):** Daily test blocks now embed inputs/outputs via `repr()`, so quotes, backslashes and newlines in examples (e.g. `s = "()"`) produce valid Python instead of a `SyntaxError`. The `Expected:` value got the same treatment.
+- **Clearer diagnostics:** `main.py` and `leetcode_client.py` messages are all in English now, split by stage — fetch failures, collection warnings (missing/null/empty fields continue with a warning), topic registration, and file generation.
+- **New solution file layout:** header shows extraction timestamp (`datetime.now`), source link with a pointer to the full statement, title, difficulty and tags; the trailing `Approach/Issue/Complexity` block was replaced by a single open `Notes:` section.
+- **README disclaimer:** added purpose, scope (local practice in VS Code, full submission on LeetCode), and a takedown commitment following market practice for personal GraphQL-based projects.
+### Fixes & Tweaks
+- **Windows environment rebuild:** recreated `.venv` with the system Python 3.13 (uv-managed 3.12 had its `_ssl` DLL blocked by Application Control), aligned `.python-version` to `3.13`.
+
+
+
 ## 2026-05-31
 ### What's New
 - **Better Test Parser (`generator.py`):** Re-engineered how auto-generated test cases are handled. Instead of using fragile string splitting over the `=` sign (which broke when problems had multiple parameter assignments), the script now dynamically translates LeetCode primitives (`true`, `false`, `null`) to Python syntax and wraps parameters inside an isolated `exec()` environment. It unpacks them directly into the solution method using dictionary unpacking (`**inputs`), handling the multi-variable test cases automatically without syntax errors.
