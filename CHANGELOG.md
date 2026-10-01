@@ -3,7 +3,7 @@ This file goal is tracking the project evolution. I'll use it to note down new f
 
 
 
-## 2026-10-02
+## 2026-10-01
 ### What's New
 - **Collection diagnostics (`leetcode_client.py`, `main.py`):** fetch step now distinguishes missing/null/empty per field with `warnings[]` instead of generic `KeyError`; only a missing `questionFrontendId` blocks the run (identity failure, per architecture §3.1). `main.py` runs in three stages (fetch → topics → generate) with specific messages, and registers topics incrementally into `data/topics.json` without touching persistence.
 - **Safer test generation (`generator.py`):** Daily test blocks now embed inputs/outputs via `repr()`, so quotes, backslashes and newlines in examples (e.g. `s = "()"`) produce valid Python instead of a `SyntaxError`. The `Expected:` value got the same treatment.

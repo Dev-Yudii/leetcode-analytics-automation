@@ -172,7 +172,9 @@ def generate_daily_file(challenge_data):
         code_block = """class Solution:\n    def method_name(self):\n        pass"""
 
     # Build the blueprint layout for daily practice 
-    extracted_on = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %Z")
+    now = datetime.now().astimezone()
+    offset_h = int(now.utcoffset().total_seconds() // 3600)
+    extracted_on = f"{now:%Y-%m-%d %H:%M} (UTC{offset_h:+d})"
     file_template = f'''"""
 This problem was extracted on {extracted_on} from LeetCode at {challenge_data['link']}.
 You can check the full problem description there.

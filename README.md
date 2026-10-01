@@ -1,7 +1,7 @@
 # Personal LeetCode Automation & Data Pipeline
 
 ## Description
-Personal data pipeline that fetches the LeetCode Daily Challenge via GraphQL (one request per day, no login), validates the response into metadata + collection warnings, tracks topic identity in a versioned catalog, generates a ready-to-solve Python file with auto-parsed test cases, and logs metadata into a local database (SQLite today, PostgreSQL planned).
+Personal data pipeline that fetches the LeetCode Daily Challenge via GraphQL (one request per day, no login), validates the response into metadata + collection warnings, tracks topic identity in a versioned catalog, generates a pre-filled Python template — header, starter code and local tests — so I can solve and push to GitHub without hand-editing anything that changes daily, and logs metadata into a local database (SQLite today, PostgreSQL planned).
 
 The generated file is a local practice workspace: it opens in any Python 3 environment (e.g. VS Code) for solving and local test runs; the full submission, with all test cases, happens on LeetCode. Solved files live in the separate [LeetCode Solutions](https://github.com/Dev-Yudii/leetcode) repository; this repo holds only the automation.
 
@@ -18,11 +18,11 @@ Personal, educational data-pipeline project. Not affiliated with, endorsed, or s
 ## About This Project
 This project started with a simple daily frustration: I wanted to keep my LeetCode Daily Challenge solutions organized, and track my progress on GitHub without wasting time manually copying templates and code snippets. 
 
-As someone studying **Data Analytics and Data Engineering**, I realized that instead of just creating a repository of static files, I could build a local automation tool that doubles as a personal data pipeline. Over time, this system will log some of my coding behavior, allowing me to feed a Business Intelligence (BI) dashboard to extract insights about my learning curve and performance.
+As someone studying **Data Analytics and Data Engineering**, I realized that instead of just creating a repository of static files, I could build a local automation tool that doubles as a personal data pipeline. Every day it collects the challenge metadata and grows a history of my own solving behavior. In the future, that dataset will feed a Business Intelligence (BI) dashboard with insights about my learning curve and performance — for now, the pipeline's job is to collect reliably, one day at a time.
 
 
-## The API Challenge
-During my initial research, I discovered that LeetCode does not provide a conventional REST API. Instead, it relies on a **GraphQL endpoint**. While less straightforward than traditional endpoints, it allowed me to design custom queries to fetch exactly what I need each day: the problem ID, title, difficulty, topic tags, markdown/HTML description, and the official Python3 starter code snippet.
+## Data Source & Collection Strategy
+LeetCode offers no conventional REST API — only a GraphQL endpoint. That shaped the project: one tailored query per day fetches exactly what's needed (problem ID, title, difficulty, topic tags, statement HTML for test extraction, and the official Python3 starter snippet), with no login and no extra traffic.
 
 
 ## Current Tech Stack (Phase 1)
