@@ -31,14 +31,25 @@ The project is currently built as a lightweight local Automation Script (MVP):
 * **Requests**: To communicate with LeetCode's GraphQL API.
 * **SQLite3 (Built-in)**: A lightweight, serverless relational database used to store problem metadata and track my daily problem-solving status incrementally.
 * **Pathlib & RE (Python Standard Libraries)**: For dynamic file/folder creation based on problem topics, and regular expressions to extract clean test cases from HTML descriptions.
+* **ast (Python Standard Library)**: To parse the LeetCode examples into real Python literals, instead of rewriting the text blindly.
 
 
 ## How It Works
 1. **Fetch**: The script connects to LeetCode and pulls the active daily challenge data (one request per day, no login).
 2. **Validate**: The response is checked field by field. Missing `questionFrontendId` blocks the run (no valid identity); any other missing/null/empty field becomes a collection warning and the run continues.
-3. **Topics**: Topic names are normalized and registered incrementally into the versioned `data/topics.json` catalog (stable IDs, never reused).
-4. **Generate**: It creates a ready-to-solve Python file named after the primary key (`{ID}_{slug}.py`) under the first topic's folder, with metadata header, starter code and auto-parsed local test cases.
-5. **Log**: It registers the problem into a local `leetcode_history.db` file, initializing its status as `PENDING`.
+3. **Persist**: The problem is registered into the local `leetcode_history.db` file, initializing its status as `PENDING`. Re-running never creates a duplicate and never overwrites a value that was already collected.
+4. **Topics**: Topic names are normalized and registered incrementally into the versioned `data/topics.json` catalog (stable IDs, never reused).
+5. **Generate**: It creates a ready-to-solve Python file named after the primary key (`{ID}_{slug}.py`) under the first topic's folder, with metadata header, starter code and auto-parsed local test cases. An existing file is never overwritten.
+
+Every step is isolated: a failure in one of them does not cancel the others, it marks the run as *degraded* instead of losing the day.
+
+## Running
+
+```bash
+uv run python main.py
+```
+
+The run appends to `logs/pipeline.log` and exits with `0` (everything went fine), `1` (nothing was collected) or `2` (collected, but a step failed) — so a scheduler can tell success from failure.
 
 > Design decisions (identity, topic catalog, pipeline order) live in [docs/architecture.md](./docs/architecture.md); the working plan lives in [TODO.md](./TODO.md).
 

@@ -2,6 +2,25 @@
 This file goal is tracking the project evolution. I'll use it to note down new features, things that broke, fixes I applied, and the tools/best practices I'm learning along the way.
 
 
+## 2026-10-21
+### What's New
+- **Pipeline as callable steps (`scripts/pipeline.py`):** the daily run is now `collect → validate → determine_file_path → persist → process_topics → generate` (architecture §17), with each step isolated and reusable. `main.py` became a thin entry point that only reports the outcome.
+- **Persistence no longer depends on the file (`scripts/persistence.py`):** the problem is stored **before** the file is generated and the file is never the condition to persist a problem. Re-running the pipeline can no longer lose a record — that was the most dangerous bug found in the audit.
+- **Idempotent writes:** re-running the same Daily Challenge reports `inserted`, `enriched` or `unchanged` and never creates a duplicate row. Only fields that are still empty are filled in; a value that was already collected is never overwritten (§18, §20). The rule is isolated in one function so it can be revised when §20 is closed.
+- **Errors state their real cause (§23):** `sqlite3.IntegrityError`, `OperationalError`, `DatabaseError` and `OSError` are handled separately instead of every failure being reported as "Problem already registered". A failing step no longer cancels the others: the run ends as `degraded` and the day is not lost.
+- **Real literal parser (`scripts/translator.py`):** the old blind `replace("true"/"false"/"null")` + comma split is gone. The new parser scans the text, keeps string literals verbatim, converts only standalone tokens outside strings and validates the result with `ast.literal_eval`. `s = "a,b"` no longer becomes `s = "a ; b"` (a SyntaxError) and `"nullable"` is no longer corrupted into `"Noneable"`. A value that cannot be parsed becomes a comment instead of broken code.
+- **Cleaner generated files:** the test block now uses real Python literals instead of `exec()` with injected strings, and the expected output is a value instead of a quoted string, so the printed comparison is accurate.
+- **Run log and exit codes:** every run appends to `logs/pipeline.log` (timestamp, level, message) and `main.py` returns `0` (ok), `1` (nothing collected) or `2` (collected but a step failed) — a scheduler can finally tell success from failure.
+- **Transport separated from interpretation (`scripts/collection.py`):** `leetcode_client.py` only talks to LeetCode; `parse_challenge()` is pure and testable without a network call. The collection rules (missing / null / empty, identity) stayed exactly as they were.
+- **Configurable paths (`scripts/db_utils.py`):** the output folder and the database can be set with `LEETCODE_OUTPUT_DIR` and `LEETCODE_DB_PATH`, so the project no longer depends on a fixed `C:\Dev\Projects\<repo>` layout.
+- **Test coverage:** 66 new tests for the translator, the collection rules, the generator and the pipeline order (76 in total), all green.
+
+### Fixes & Tweaks
+- **Windows console encoding:** printing a non-ASCII title used to raise `UnicodeEncodeError` on the cp1252 console and kill the run. The console is now reconfigured with `errors="replace"`.
+- **HTML entities:** `clean_html` now uses `html.unescape`, so `&amp;lt;` no longer decodes twice and `&nbsp;` no longer leaks into the text.
+- **Example parsing:** only the `Example N:` blocks are read, so an "Input:" mentioned in the description no longer becomes a fake test case.
+- **Committed the collected work:** the 18 generated files (2026-10-01 → 10-21) are now in the solutions repository, and the 14 new topics of `data/topics.json` are versioned here — the catalog is persistent identity and must never be lost (§12.1).
+
 
 ## 2026-10-01
 ### What's New

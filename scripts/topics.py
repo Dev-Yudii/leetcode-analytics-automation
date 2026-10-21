@@ -1,12 +1,26 @@
 import json
+import re
 from pathlib import Path
 
 CATALOG_PATH = Path(__file__).resolve().parents[1] / "data" / "topics.json"
+
+# Characters that are not allowed in file and folder names on Windows
+ILLEGAL_PATH_CHARS = re.compile(r'[<>:"/\\|?*]')
 
 
 def normalize_topic_name(name: str) -> str:
     """Normalize topic name deterministically."""
     return name.strip().title()
+
+
+def folder_name_for_topic(name: str) -> str:
+    """Folder name used to organize the solution files of a topic.
+
+    'Heap (Priority Queue)' -> 'heap_(priority_queue)'
+    """
+    normalized = normalize_topic_name(name)
+    safe = ILLEGAL_PATH_CHARS.sub("_", normalized)
+    return safe.lower().replace(" ", "_")
 
 
 def load_catalog() -> list[dict]:
