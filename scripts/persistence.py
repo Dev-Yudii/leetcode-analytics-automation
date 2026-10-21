@@ -1,4 +1,4 @@
-"""Persistence of collected problems.
+"""Persistence of collected problems in PostgreSQL.
 
 Only storage lives here: no file generation, no HTTP, no catalog writes.
 The pipeline decides the order of the steps (docs/architecture.md, section 17)
@@ -6,91 +6,67 @@ and this module is called before the file is generated, so a problem is
 never lost because a file already exists.
 """
 
-import sqlite3
+import psycopg
 
-from scripts.db_utils import connect
-from scripts.topics import folder_name_for_topic
-
-TABLE_NAME = "leetcode_problems"
-
-CREATE_TABLE_QUERY = f"""
-    CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
-        id TEXT PRIMARY KEY,
-        title TEXT,
-        slug TEXT,
-        link TEXT,
-        difficulty TEXT,
-        date_generated TEXT,
-        category TEXT,
-        status TEXT DEFAULT 'PENDING'
-    )
-"""
-
-# Legacy schema, kept as is until the PostgreSQL migration (Pass 2).
-# `date_generated` holds the challenge date and `category` holds the first
-# topic: both are replaced by `challenge_date` and by the `problem_topics`
-# table in the new model.
-COLUMNS = ("id", "title", "slug", "link", "difficulty", "date_generated", "category")
+from scripts.db_utils import apply_schema, get_connection
 
 INSERTED = "inserted"
 ENRICHED = "enriched"
 UNCHANGED = "unchanged"
+
+# Columns of the problems table that a re-run may complete.
+COMPLETABLE_COLUMNS = ("title", "slug", "link", "difficulty", "challenge_date", "file_path")
 
 
 class PersistenceError(Exception):
     """The problem could not be stored. The message states the real cause."""
 
 
-def _row_values(data: dict) -> dict:
-    """Map the collected challenge onto the legacy table columns."""
-    topics = data.get("topics") or []
-    category = folder_name_for_topic(topics[0]).upper() if topics else ""
-    return {
-        "id": data.get("id"),
-        "title": data.get("title"),
-        "slug": data.get("slug"),
-        "link": data.get("link"),
-        "difficulty": data.get("difficulty"),
-        "date_generated": data.get("date"),
-        "category": category,
-    }
+def _translate(error: Exception) -> PersistenceError:
+    """Turn a driver error into a message that names the real cause."""
+    if isinstance(error, psycopg.errors.UniqueViolation):
+        return PersistenceError(f"the record already exists: {error}")
+    if isinstance(error, psycopg.errors.ForeignKeyViolation):
+        return PersistenceError(f"foreign key violation: {error}")
+    if isinstance(error, psycopg.errors.CheckViolation):
+        return PersistenceError(f"check constraint violated: {error}")
+    if isinstance(error, psycopg.errors.InsufficientPrivilege):
+        return PersistenceError(f"the database refused the operation: {error}")
+    if isinstance(error, psycopg.OperationalError):
+        return PersistenceError(f"could not reach the database: {error}")
+    if isinstance(error, psycopg.Error):
+        return PersistenceError(f"database error: {error}")
+    if isinstance(error, OSError):
+        return PersistenceError(f"network or file error: {error}")
+    return PersistenceError(f"unexpected error: {error!r}")
 
 
 def _is_empty(value) -> bool:
     return value is None or (isinstance(value, str) and not value.strip())
 
 
-def ensure_schema(db_path=None) -> None:
-    """Create the problems table when it does not exist yet."""
-    conn = None
+def _row_values(data: dict, file_path: str) -> dict:
+    """Map the collected challenge onto the problems table."""
+    return {
+        "id": data.get("id"),
+        "title": data.get("title"),
+        "slug": data.get("slug"),
+        "link": data.get("link"),
+        "difficulty": data.get("difficulty"),
+        "challenge_date": data.get("date"),
+        "file_path": file_path,
+    }
+
+
+def ensure_schema() -> None:
+    """Create the tables when they do not exist yet (idempotent)."""
     try:
-        conn = connect(db_path)
-        conn.execute(CREATE_TABLE_QUERY)
-        conn.commit()
-    except sqlite3.IntegrityError as e:
-        if conn:
-            conn.rollback()
-        raise PersistenceError(f"could not create the table '{TABLE_NAME}': {e}") from e
-    except sqlite3.OperationalError as e:
-        if conn:
-            conn.rollback()
-        raise PersistenceError(
-            f"could not open the database to create the table '{TABLE_NAME}': {e}"
-        ) from e
-    except sqlite3.DatabaseError as e:
-        if conn:
-            conn.rollback()
-        raise PersistenceError(f"the database file is corrupted: {e}") from e
-    except OSError as e:
-        if conn:
-            conn.rollback()
-        raise PersistenceError(f"no permission to write the database file: {e}") from e
-    finally:
-        if conn:
-            conn.close()
+        apply_schema()
+    except Exception as e:
+        raise _translate(e) from e
 
 
-def upsert_problem(data: dict, db_path=None) -> str:
+def upsert_problem(data: dict, file_path: str, status: str | None = None) -> str:
     """Store the collected problem.
 
     Returns INSERTED, ENRICHED or UNCHANGED.
@@ -99,68 +75,177 @@ def upsert_problem(data: dict, db_path=None) -> str:
     (architecture section 18) and never overwrites a value that was already
     collected: only fields that are still empty are filled in (section 20).
     """
-    values = _row_values(data)
+    values = _row_values(data, file_path)
     problem_id = values["id"]
     if not problem_id:
         raise PersistenceError("the problem has no identity (questionFrontendId missing)")
 
-    ensure_schema(db_path)
+    ensure_schema()
 
-    conn = None
     try:
-        conn = connect(db_path)
-        cursor = conn.cursor()
-        cursor.execute(
-            f"SELECT {', '.join(COLUMNS)} FROM {TABLE_NAME} WHERE id = ?", (problem_id,)
-        )
-        existing = cursor.fetchone()
-        cursor.close()
+        with get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "SELECT title, slug, link, difficulty, challenge_date, file_path"
+                    " FROM problems WHERE id = %s",
+                    (problem_id,),
+                )
+                existing = cursor.fetchone()
 
-        if existing is None:
-            placeholders = ", ".join("?" for _ in COLUMNS)
-            conn.execute(
-                f"INSERT INTO {TABLE_NAME} ({', '.join(COLUMNS)}) VALUES ({placeholders})",
-                tuple(values[column] for column in COLUMNS),
-            )
-            conn.commit()
-            return INSERTED
+                if existing is None:
+                    cursor.execute(
+                        "INSERT INTO problems"
+                        " (id, title, slug, link, difficulty, challenge_date, file_path, status)"
+                        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                        (
+                            values["id"],
+                            values["title"],
+                            values["slug"],
+                            values["link"],
+                            values["difficulty"],
+                            values["challenge_date"],
+                            values["file_path"],
+                            status or "PENDING",
+                        ),
+                    )
+                    return INSERTED
 
-        stored = dict(zip(COLUMNS, existing))
-        updates = {
-            column: values[column]
-            for column in COLUMNS
-            if column != "id" and _is_empty(stored.get(column)) and not _is_empty(values[column])
-        }
-        if not updates:
-            conn.commit()
-            return UNCHANGED
+                stored = dict(zip(COMPLETABLE_COLUMNS, existing))
+                updates = {
+                    column: values[column]
+                    for column in COMPLETABLE_COLUMNS
+                    if _is_empty(stored.get(column)) and not _is_empty(values[column])
+                }
+                if not updates:
+                    return UNCHANGED
 
-        assignments = ", ".join(f"{column} = ?" for column in updates)
-        conn.execute(
-            f"UPDATE {TABLE_NAME} SET {assignments} WHERE id = ?",
-            tuple(updates.values()) + (problem_id,),
-        )
-        conn.commit()
-        return ENRICHED
+                assignments = ", ".join(f"{column} = %s" for column in updates)
+                cursor.execute(
+                    f"UPDATE problems SET {assignments}, updated_at = now() WHERE id = %s",
+                    tuple(updates.values()) + (problem_id,),
+                )
+                return ENRICHED
+    except Exception as e:
+        raise _translate(e) from e
 
-    except sqlite3.IntegrityError as e:
-        if conn:
-            conn.rollback()
-        raise PersistenceError(f"the problem {problem_id} is already registered: {e}") from e
-    except sqlite3.OperationalError as e:
-        if conn:
-            conn.rollback()
-        raise PersistenceError(
-            f"could not write to the database (locked, missing or read-only): {e}"
-        ) from e
-    except sqlite3.DatabaseError as e:
-        if conn:
-            conn.rollback()
-        raise PersistenceError(f"the database file is corrupted: {e}") from e
-    except OSError as e:
-        if conn:
-            conn.rollback()
-        raise PersistenceError(f"no permission to write the database file: {e}") from e
-    finally:
-        if conn:
-            conn.close()
+
+def sync_topics(topic_ids: dict) -> int:
+    """Write the topics to the database using the IDs of the versioned catalog.
+
+    The database never generates an ID on its own (§15). A disagreement
+    between the catalog and the database is an error, not something to
+    repair silently (§13).
+    """
+    if not topic_ids:
+        return 0
+
+    ensure_schema()
+    written = 0
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cursor:
+                for name, topic_id in topic_ids.items():
+                    cursor.execute("SELECT id, name FROM topics WHERE id = %s", (topic_id,))
+                    by_id = cursor.fetchone()
+                    if by_id and by_id[1] != name:
+                        raise PersistenceError(
+                            f"the catalog and the database disagree about topic {name!r}:"
+                            f" catalog id {topic_id}, database id {by_id[0]} with name {by_id[1]!r}"
+                        )
+
+                    cursor.execute("SELECT id FROM topics WHERE name = %s", (name,))
+                    by_name = cursor.fetchone()
+                    if by_name and by_name[0] != topic_id:
+                        raise PersistenceError(
+                            f"the catalog and the database disagree about topic {name!r}:"
+                            f" catalog id {topic_id}, database id {by_name[0]}"
+                        )
+
+                    cursor.execute(
+                        "INSERT INTO topics (id, name) VALUES (%s, %s)"
+                        " ON CONFLICT (id) DO NOTHING",
+                        (topic_id, name),
+                    )
+                    written += 1
+    except PersistenceError:
+        raise
+    except Exception as e:
+        raise _translate(e) from e
+    return written
+
+
+def link_problem_topics(problem_id: str, topic_ids: dict) -> int:
+    """Associate the problem with every topic returned by LeetCode."""
+    if not problem_id or not topic_ids:
+        return 0
+
+    ensure_schema()
+    linked = 0
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cursor:
+                for topic_id in topic_ids.values():
+                    cursor.execute(
+                        "INSERT INTO problem_topics (problem_id, topic_id) VALUES (%s, %s)"
+                        " ON CONFLICT DO NOTHING",
+                        (problem_id, topic_id),
+                    )
+                    linked += cursor.rowcount
+    except Exception as e:
+        raise _translate(e) from e
+    return linked
+
+
+def start_run() -> int:
+    """Open a collection run and return its id."""
+    ensure_schema()
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "INSERT INTO collection_runs (status) VALUES ('running') RETURNING id"
+                )
+                return cursor.fetchone()[0]
+    except Exception as e:
+        raise _translate(e) from e
+
+
+def add_event(run_id: int, level: str, step: str, message: str) -> None:
+    """Record a warning or an error observed during the run (§19)."""
+    if not run_id:
+        return
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "INSERT INTO collection_events (run_id, level, step, message)"
+                    " VALUES (%s, %s, %s, %s)",
+                    (run_id, level, step, message),
+                )
+    except Exception:
+        # The audit must never break the run
+        pass
+
+
+def finish_run(
+    run_id: int,
+    status: str,
+    problem_id: str | None = None,
+    challenge_date: str | None = None,
+    exit_code: int | None = None,
+    message: str | None = None,
+) -> None:
+    """Close the collection run with its outcome."""
+    if not run_id:
+        return
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE collection_runs SET finished_at = now(), status = %s,"
+                    " problem_id = %s, challenge_date = %s, exit_code = %s, message = %s"
+                    " WHERE id = %s",
+                    (status, problem_id, challenge_date, exit_code, message, run_id),
+                )
+    except Exception:
+        pass

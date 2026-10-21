@@ -25,11 +25,12 @@ As someone studying **Data Analytics and Data Engineering**, I realized that ins
 LeetCode offers no conventional REST API — only a GraphQL endpoint. That shaped the project: one tailored query per day fetches exactly what's needed (problem ID, title, difficulty, topic tags, statement HTML for test extraction, and the official Python3 starter snippet), with no login and no extra traffic.
 
 
-## Current Tech Stack (Phase 1)
+## Current Tech Stack (Phase 2)
 The project is currently built as a lightweight local Automation Script (MVP):
 * **Python 3**: The core programming language for the automation logic.
 * **Requests**: To communicate with LeetCode's GraphQL API.
-* **SQLite3 (Built-in)**: A lightweight, serverless relational database used to store problem metadata and track my daily problem-solving status incrementally.
+* **PostgreSQL (Docker)**: The operational relational database — `problems`, `topics`, `problem_topics` and the collection audit tables. It replaces the old SQLite file.
+* **psycopg 3**: The PostgreSQL driver.
 * **Pathlib & RE (Python Standard Libraries)**: For dynamic file/folder creation based on problem topics, and regular expressions to extract clean test cases from HTML descriptions.
 * **ast (Python Standard Library)**: To parse the LeetCode examples into real Python literals, instead of rewriting the text blindly.
 
@@ -37,19 +38,40 @@ The project is currently built as a lightweight local Automation Script (MVP):
 ## How It Works
 1. **Fetch**: The script connects to LeetCode and pulls the active daily challenge data (one request per day, no login).
 2. **Validate**: The response is checked field by field. Missing `questionFrontendId` blocks the run (no valid identity); any other missing/null/empty field becomes a collection warning and the run continues.
-3. **Persist**: The problem is registered into the local `leetcode_history.db` file, initializing its status as `PENDING`. Re-running never creates a duplicate and never overwrites a value that was already collected.
-4. **Topics**: Topic names are normalized and registered incrementally into the versioned `data/topics.json` catalog (stable IDs, never reused).
+3. **Persist**: The problem is registered into PostgreSQL, initializing its status as `PENDING`. Re-running never creates a duplicate and never overwrites a value that was already collected.
+4. **Topics**: Topic names are normalized and registered incrementally into the versioned `data/topics.json` catalog (stable IDs, never reused). The same IDs are written to the `topics` table, and the problem is linked to **all** of its topics in `problem_topics`.
 5. **Generate**: It creates a ready-to-solve Python file named after the primary key (`{ID}_{slug}.py`) under the first topic's folder, with metadata header, starter code and auto-parsed local test cases. An existing file is never overwritten.
 
-Every step is isolated: a failure in one of them does not cancel the others, it marks the run as *degraded* instead of losing the day.
+Every step is isolated: a failure in one of them does not cancel the others, it marks the run as *degraded* instead of losing the day. Each run is recorded in `collection_runs`, and every warning becomes a `collection_events` row — that is what tells "did not collect" from "collection failed".
+
 
 ## Running
 
 ```bash
+# 1. the database (Docker)
+docker compose up -d
+
+# 2. the daily collection
 uv run python main.py
 ```
 
 The run appends to `logs/pipeline.log` and exits with `0` (everything went fine), `1` (nothing was collected) or `2` (collected, but a step failed) — so a scheduler can tell success from failure.
+
+### Configuration
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `LEETCODE_DB_URL` | `postgresql://leetcode:leetcode_local_dev@localhost:5432/leetcode_analytics` | Operational database |
+| `LEETCODE_OUTPUT_DIR` | `<user>/Problem-Solving/LeetCode` | Where the solution files live |
+| `LEETCODE_DB_TIMEOUT` | `10` | Seconds to wait for the database |
+
+### Database tasks
+
+```bash
+uv run python scripts/db_utils.py     # run any SQL query
+uv run python scripts/export_legacy.py # archive the old SQLite database
+uv run python scripts/migrate_legacy.py # migrate the old rows into PostgreSQL
+```
 
 > Design decisions (identity, topic catalog, pipeline order) live in [docs/architecture.md](./docs/architecture.md); the working plan lives in [TODO.md](./TODO.md).
 
@@ -57,7 +79,9 @@ The run appends to `logs/pipeline.log` and exits with `0` (everything went fine)
 ## Roadmap
 - [x] Daily fetch + local file generation + metadata logging
 - [x] Topic catalog with stable IDs + collection warnings
-- [ ] PostgreSQL (`problems`, `topics`, `problem_topics`) once the Python pipeline is stable
-- [ ] Collection audit, backups, orchestration (Airflow) — later
+- [x] PostgreSQL (`problems`, `topics`, `problem_topics`) + collection audit
+- [x] Idempotent pipeline (safe to re-run, safe to schedule)
+- [ ] Airflow DAG: `collect → validate → persist → process_topics → generate`
+- [ ] Scheduled daily run and `pg_dump` backups
 
 See [TODO.md](./TODO.md) for the current working plan and [CHANGELOG.md](./CHANGELOG.md) for history.

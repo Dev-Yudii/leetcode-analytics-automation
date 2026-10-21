@@ -1,0 +1,58 @@
+-- Schema of the LeetCode analytics pipeline.
+-- The decisions behind it live in docs/architecture.md.
+
+-- Topics: the identity comes from the versioned catalog data/topics.json.
+-- The database never generates an ID on its own (§12, §15).
+CREATE TABLE IF NOT EXISTS topics (
+    id   INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE
+);
+
+-- Problems: the canonical identity is LeetCode's questionFrontendId (§3).
+CREATE TABLE IF NOT EXISTS problems (
+    id             VARCHAR(20) PRIMARY KEY NOT NULL,
+    title          TEXT,
+    slug           TEXT,
+    link           TEXT,
+    difficulty     TEXT,
+    challenge_date DATE,
+    file_path      TEXT NOT NULL,
+    status         TEXT NOT NULL DEFAULT 'PENDING',
+    in_progress_at TIMESTAMPTZ,
+    concluded_at   TIMESTAMPTZ,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT problems_status_check CHECK (status IN ('PENDING', 'IN_PROGRESS', 'CONCLUDED'))
+);
+
+-- Every topic returned by LeetCode is kept, not only the first one (§9, §11).
+CREATE TABLE IF NOT EXISTS problem_topics (
+    problem_id VARCHAR(20) NOT NULL REFERENCES problems(id) ON DELETE CASCADE,
+    topic_id   INTEGER NOT NULL REFERENCES topics(id),
+    PRIMARY KEY (problem_id, topic_id)
+);
+
+-- One row per collection run: tells "not collected" from "collection failed" (§19).
+CREATE TABLE IF NOT EXISTS collection_runs (
+    id             BIGSERIAL PRIMARY KEY,
+    started_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    finished_at    TIMESTAMPTZ,
+    status         TEXT NOT NULL,
+    problem_id     VARCHAR(20),
+    challenge_date DATE,
+    exit_code      INTEGER,
+    message        TEXT
+);
+
+-- The warnings and errors observed during a run (§19).
+CREATE TABLE IF NOT EXISTS collection_events (
+    id         BIGSERIAL PRIMARY KEY,
+    run_id     BIGINT NOT NULL REFERENCES collection_runs(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    level      TEXT NOT NULL,
+    step       TEXT,
+    message    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS problems_challenge_date_idx ON problems (challenge_date);
+CREATE INDEX IF NOT EXISTS collection_events_run_idx ON collection_events (run_id);

@@ -16,7 +16,15 @@ from dataclasses import dataclass, field
 from scripts.collection import CollectionError
 from scripts.generator import determine_file_path, generate_daily_file, relative_file_path
 from scripts.leetcode_client import get_daily_challenge
-from scripts.persistence import PersistenceError, upsert_problem
+from scripts.persistence import (
+    PersistenceError,
+    add_event,
+    finish_run,
+    link_problem_topics,
+    start_run,
+    sync_topics,
+    upsert_problem,
+)
 from scripts.topics import get_or_create_topic_id, normalize_topic_name
 
 OK = "ok"
@@ -87,9 +95,9 @@ def determine_path(data: dict):
     return determine_file_path(data)
 
 
-def persist(data: dict, db_path=None) -> str:
+def persist(data: dict, file_path: str) -> str:
     """Store the problem. Returns inserted, enriched or unchanged."""
-    return upsert_problem(data, db_path=db_path)
+    return upsert_problem(data, file_path=file_path)
 
 
 def process_topics(data: dict, logger=None) -> dict:
@@ -119,12 +127,18 @@ def process_topics(data: dict, logger=None) -> dict:
     return topic_ids
 
 
+def persist_topics(problem_id: str, topic_ids: dict) -> int:
+    """Write the topics to the database and link them to the problem."""
+    sync_topics(topic_ids)
+    return link_problem_topics(problem_id, topic_ids)
+
+
 def generate(data: dict, file_path=None) -> str:
     """Write the solution file. Never overwrites an existing one."""
     return generate_daily_file(data, file_path=file_path)
 
 
-def run_daily(logger=None, db_path=None, collector=None) -> RunResult:
+def run_daily(logger=None, collector=None) -> RunResult:
     """Run the whole pipeline.
 
     Never raises: the returned result says what happened on every step.
@@ -136,6 +150,16 @@ def run_daily(logger=None, db_path=None, collector=None) -> RunResult:
 
     result = RunResult()
 
+    # The run is registered before anything happens, so a failure is
+    # recorded too and "not collected" can be told from "collection failed".
+    run_id = None
+    try:
+        run_id = start_run()
+    except PersistenceError as e:
+        logger.warning(f"could not open the collection run record: {e}")
+    except Exception as e:
+        logger.warning(f"could not open the collection run record: {e!r}")
+
     # 1. collect
     try:
         data = collector() if collector else collect()
@@ -143,11 +167,15 @@ def run_daily(logger=None, db_path=None, collector=None) -> RunResult:
         logger.error(f"Collection failed: {e}")
         result.steps.append(StepOutcome("collect", FAILED, str(e)))
         result.status = FAILED
+        add_event(run_id, "ERROR", "collect", str(e))
+        finish_run(run_id, FAILED, exit_code=result.exit_code, message=str(e))
         return result
     except Exception as e:
         logger.error(f"Collection failed with an unexpected error: {e!r}")
         result.steps.append(StepOutcome("collect", FAILED, repr(e)))
         result.status = FAILED
+        add_event(run_id, "ERROR", "collect", repr(e))
+        finish_run(run_id, FAILED, exit_code=result.exit_code, message=repr(e))
         return result
 
     result.data = data
@@ -162,11 +190,14 @@ def run_daily(logger=None, db_path=None, collector=None) -> RunResult:
         logger.error(str(e))
         result.steps.append(StepOutcome("validate", FAILED, str(e)))
         result.status = FAILED
+        add_event(run_id, "ERROR", "validate", str(e))
+        finish_run(run_id, FAILED, exit_code=result.exit_code, message=str(e))
         return result
 
     result.warnings = warnings
     for warning in warnings:
         logger.warning(warning)
+        add_event(run_id, "WARN", "validate", warning)
     result.steps.append(
         StepOutcome("validate", OK, f"{len(warnings)} collection warning(s)")
     )
@@ -179,19 +210,22 @@ def run_daily(logger=None, db_path=None, collector=None) -> RunResult:
 
     # 4. persist the problem
     try:
-        outcome = persist(data, db_path=db_path)
+        outcome = persist(data, file_path=relative)
         logger.info(f"Database: {outcome} ({relative})")
         result.steps.append(StepOutcome("persist", OK, outcome))
     except PersistenceError as e:
         logger.error(f"Database error: {e}")
         result.steps.append(StepOutcome("persist", FAILED, str(e)))
+        add_event(run_id, "ERROR", "persist", str(e))
         result.status = DEGRADED
     except Exception as e:
         logger.error(f"Database error (unexpected): {e!r}")
         result.steps.append(StepOutcome("persist", FAILED, repr(e)))
+        add_event(run_id, "ERROR", "persist", repr(e))
         result.status = DEGRADED
 
-    # 5. process topics
+    # 5. process topics (versioned catalog)
+    topic_ids = {}
     try:
         topic_ids = process_topics(data, logger=logger)
         summary = ", ".join(f"{name}->{topic_id}" for name, topic_id in topic_ids.items())
@@ -200,9 +234,26 @@ def run_daily(logger=None, db_path=None, collector=None) -> RunResult:
     except Exception as e:
         logger.error(f"Topic registration failed: {e!r}")
         result.steps.append(StepOutcome("process_topics", FAILED, repr(e)))
+        add_event(run_id, "ERROR", "process_topics", repr(e))
         result.status = DEGRADED
 
-    # 6. generate the file
+    # 6. persist the topic relationship
+    try:
+        linked = persist_topics(data.get("id"), topic_ids)
+        logger.info(f"Problem topics: {linked} new association(s)")
+        result.steps.append(StepOutcome("persist_problem_topics", OK, f"{linked} new association(s)"))
+    except PersistenceError as e:
+        logger.error(f"Topic association failed: {e}")
+        result.steps.append(StepOutcome("persist_problem_topics", FAILED, str(e)))
+        add_event(run_id, "ERROR", "persist_problem_topics", str(e))
+        result.status = DEGRADED
+    except Exception as e:
+        logger.error(f"Topic association failed (unexpected): {e!r}")
+        result.steps.append(StepOutcome("persist_problem_topics", FAILED, repr(e)))
+        add_event(run_id, "ERROR", "persist_problem_topics", repr(e))
+        result.status = DEGRADED
+
+    # 7. generate the file
     try:
         path = generate(data, file_path=file_path)
         logger.info(f"File: {path}")
@@ -210,12 +261,23 @@ def run_daily(logger=None, db_path=None, collector=None) -> RunResult:
     except OSError as e:
         logger.error(f"File generation failed: {e}")
         result.steps.append(StepOutcome("generate", FAILED, str(e)))
+        add_event(run_id, "ERROR", "generate", str(e))
         result.status = DEGRADED
     except Exception as e:
         logger.error(f"File generation failed (unexpected): {e!r}")
         result.steps.append(StepOutcome("generate", FAILED, repr(e)))
+        add_event(run_id, "ERROR", "generate", repr(e))
         result.status = DEGRADED
 
     if result.status != DEGRADED:
         result.status = OK
+
+    finish_run(
+        run_id,
+        result.status,
+        problem_id=data.get("id"),
+        challenge_date=data.get("date"),
+        exit_code=result.exit_code,
+        message=relative,
+    )
     return result

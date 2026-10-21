@@ -2,7 +2,24 @@
 This file goal is tracking the project evolution. I'll use it to note down new features, things that broke, fixes I applied, and the tools/best practices I'm learning along the way.
 
 
-## 2026-10-21
+## 2026-10-21 (Pass 2 — PostgreSQL)
+### What's New
+- **PostgreSQL is now the operational database:** `docker-compose.yml` runs `postgres:16-alpine` with a persistent volume, and `db/schema.sql` creates `problems`, `topics`, `problem_topics`, `collection_runs` and `collection_events` — the model of docs/architecture.md (§6, §15, §16, §19).
+- **The full topic relationship is stored:** the problem is linked to *every* topic LeetCode returned, not only the first one. The topic IDs come from the versioned catalog `data/topics.json`; the database never invents an ID of its own (§12, §15) and a disagreement between the catalog and the database is an error, not something to repair silently (§13).
+- **The pipeline follows §17 completely:** `collect → validate → determine_file_path → persist → process_topics → persist_problem_topics → generate`.
+- **Collection audit (`collection_runs` / `collection_events`):** every run is registered before the collection starts and closed with its status, the problem and the exit code; every warning becomes an event. This is what finally tells "did not collect" from "collection failed" — the 3 missing days of the old data had no way to be explained.
+- **The legacy SQLite database was exported and migrated:** `scripts/export_legacy.py` writes a CSV archive of the 18 old rows, and `scripts/migrate_legacy.py` rebuilds them in PostgreSQL — reading the complete topic list from the generated files, because the old table had kept only the first topic in a `category` column. The 18 problems now carry 61 topic associations that the old database had lost.
+- **`file_path` is stored as a relative path** (`string/3863_minimum-operations-to-sort-a-string.py`), never a machine-specific absolute path (§8).
+- **Connection timeout:** the database connection fails after 10 seconds instead of hanging, so a scheduler is never stuck on a database that is not answering.
+
+### Fixes & Tweaks
+- **Off-by-one in the upsert:** the row read from the database included the `id` column while the list of completable columns did not, so the comparison was shifted by one and a missing field was never filled. Caught by the new tests.
+- **The `problems` table carries the new columns:** `challenge_date` (instead of the misleading `date_generated`), `in_progress_at`, `concluded_at`, `created_at`, `updated_at` and a `CHECK` constraint on `status` (§10, §10.1).
+
+
+
+
+## 2026-10-21 (Pass 1 — reliability)
 ### What's New
 - **Pipeline as callable steps (`scripts/pipeline.py`):** the daily run is now `collect → validate → determine_file_path → persist → process_topics → generate` (architecture §17), with each step isolated and reusable. `main.py` became a thin entry point that only reports the outcome.
 - **Persistence no longer depends on the file (`scripts/persistence.py`):** the problem is stored **before** the file is generated and the file is never the condition to persist a problem. Re-running the pipeline can no longer lose a record — that was the most dangerous bug found in the audit.

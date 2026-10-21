@@ -3,7 +3,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from scripts.db_utils import get_output_path
+from scripts.paths import get_output_path
 from scripts.topics import folder_name_for_topic
 from scripts.translator import parse_input, parse_output
 
