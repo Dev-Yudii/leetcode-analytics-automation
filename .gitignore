@@ -239,3 +239,9 @@ venv/
 # Arquivos de sistema (Lixo do Windows/Mac)
 Thumbs.db
 .DS_Store
+
+# Ideias locais (nunca commitar — planejamento pessoal, fora do git)
+ideas.md
+
+# Log das execuções do pipeline (auditoria local, fora do git)
+logs/

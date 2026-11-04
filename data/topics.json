@@ -10,5 +10,113 @@
   {
     "id": 3,
     "name": "Bracket Sequences"
+  },
+  {
+    "id": 4,
+    "name": "Dynamic Programming"
+  },
+  {
+    "id": 5,
+    "name": "Backtracking"
+  },
+  {
+    "id": 6,
+    "name": "Greedy"
+  },
+  {
+    "id": 7,
+    "name": "Breadth-First Search"
+  },
+  {
+    "id": 8,
+    "name": "Array"
+  },
+  {
+    "id": 9,
+    "name": "Binary Search"
+  },
+  {
+    "id": 10,
+    "name": "Sorting"
+  },
+  {
+    "id": 11,
+    "name": "Heap (Priority Queue)"
+  },
+  {
+    "id": 12,
+    "name": "Enumeration"
+  },
+  {
+    "id": 13,
+    "name": "Hash Table"
+  },
+  {
+    "id": 14,
+    "name": "Bit Manipulation"
+  },
+  {
+    "id": 15,
+    "name": "Binary Indexed Tree"
+  },
+  {
+    "id": 16,
+    "name": "Segment Tree"
+  },
+  {
+    "id": 17,
+    "name": "Math"
+  },
+  {
+    "id": 18,
+    "name": "Depth-First Search"
+  },
+  {
+    "id": 19,
+    "name": "Union-Find"
+  },
+  {
+    "id": 20,
+    "name": "Matrix"
+  },
+  {
+    "id": 21,
+    "name": "Divide And Conquer"
+  },
+  {
+    "id": 22,
+    "name": "Tree"
+  },
+  {
+    "id": 23,
+    "name": "Graph Theory"
+  },
+  {
+    "id": 24,
+    "name": "Shortest Path"
+  },
+  {
+    "id": 25,
+    "name": "Sliding Window"
+  },
+  {
+    "id": 26,
+    "name": "Binary Search Tree"
+  },
+  {
+    "id": 27,
+    "name": "Memoization"
+  },
+  {
+    "id": 28,
+    "name": "Combinatorics"
+  },
+  {
+    "id": 29,
+    "name": "Binary Tree"
+  },
+  {
+    "id": 30,
+    "name": "Fermat's Little Theorem"
   }
 ]

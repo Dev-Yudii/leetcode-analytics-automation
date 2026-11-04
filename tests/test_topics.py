@@ -3,9 +3,9 @@ import shutil
 from pathlib import Path
 import sys
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from topics import (
+from scripts.topics import (
     normalize_topic_name,
     load_catalog,
     save_catalog,
@@ -20,11 +20,11 @@ class TestTopicsCatalog:
         self.original_catalog_path = CATALOG_PATH
         self.temp_dir = tempfile.mkdtemp()
         self.test_catalog_path = Path(self.temp_dir) / "topics.json"
-        import topics
+        import scripts.topics as topics
         topics.CATALOG_PATH = self.test_catalog_path
 
     def teardown_method(self):
-        import topics
+        import scripts.topics as topics
         topics.CATALOG_PATH = self.original_catalog_path
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
@@ -35,6 +35,7 @@ class TestTopicsCatalog:
         assert normalize_topic_name("two pointers") == "Two Pointers"
         assert normalize_topic_name("Two Pointers") == "Two Pointers"
         assert normalize_topic_name("  dynamic programming  ") == "Dynamic Programming"
+        assert normalize_topic_name("fermat's little theorem") == "Fermat's Little Theorem"
 
     def test_empty_catalog(self):
         catalog = load_catalog()

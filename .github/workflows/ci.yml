@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: leetcode
+          POSTGRES_PASSWORD: leetcode_local_dev
+          POSTGRES_DB: leetcode_analytics
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U leetcode -d leetcode_analytics"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    env:
+      LEETCODE_DB_URL: postgresql://leetcode:leetcode_local_dev@localhost:5432/leetcode_analytics
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run tests
+        run: uv run pytest -q

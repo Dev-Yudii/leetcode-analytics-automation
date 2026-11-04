@@ -1,13 +1,51 @@
+"""Transport layer: GraphQL requests to LeetCode.
+
+This module only talks to LeetCode. The interpretation of the response
+lives in `collection.py`, which is pure and testable.
+"""
+
+import time
+from datetime import date
+
 import requests
+
+from scripts.collection import CollectionError, parse_challenge, parse_question
 
 # Leetcode "API" URL
 LEETCODE_URL = "https://leetcode.com/graphql/"
 
-def get_daily_challenge():
-    # Asssigning request into variable for daily challenge infos: {date, url}
-    query = """
-    query questionOfToday {
-        activeDailyCodingChallengeQuestion {
+# A single transient failure should not lose the day's challenge.
+MAX_ATTEMPTS = 3
+RETRY_DELAY_SECONDS = 2
+RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+
+DAILY_CHALLENGE_QUERY = """
+query questionOfToday {
+    activeDailyCodingChallengeQuestion {
+        date
+        link
+        question {
+            questionFrontendId
+            title
+            titleSlug
+            difficulty
+            content
+            topicTags {
+                name
+            }
+            codeSnippets {
+                lang
+                code
+            }
+        }
+    }
+}
+"""
+
+DAILY_CHALLENGE_LIST_QUERY = """
+query dailyCodingChallengeV2($year: Int!, $month: Int!) {
+    dailyCodingChallengeV2(year: $year, month: $month) {
+        challenges {
             date
             link
             question {
@@ -15,166 +53,197 @@ def get_daily_challenge():
                 title
                 titleSlug
                 difficulty
-                content
-                topicTags {
-                    name
-                }
-                codeSnippets {
-                    lang
-                    code
-                }
             }
         }
     }
-    """
+}
+"""
 
-    # Simulating browser access
-    headers = {
+QUESTION_DETAIL_QUERY = """
+query questionData($titleSlug: String!) {
+    question(titleSlug: $titleSlug) {
+        questionFrontendId
+        title
+        titleSlug
+        difficulty
+        content
+        topicTags {
+            name
+        }
+        codeSnippets {
+            lang
+            code
+        }
+    }
+}
+"""
+
+
+def _headers() -> dict:
+    """Headers that make the request look like a browser, not a bot."""
+    return {
         "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0"
+        "User-Agent": "Mozilla/5.0",
+        "Origin": "https://leetcode.com",
+        "Referer": "https://leetcode.com/",
     }
 
-    # Getting the response after requesting through POST
-    try:
-        response = requests.post(LEETCODE_URL, json={"query": query}, headers=headers)
-    except requests.RequestException as e:
-        raise Exception(f"Failed to fetch challenge: no connection to LeetCode ({e})")
 
-    # Treatment for connection fail
-    if response.status_code != 200:
-        raise Exception(f"Failed to fetch challenge: LeetCode responded {response.status_code}")
-    
+def _raise_for_graphql_errors(payload: dict) -> None:
+    """LeetCode often reports failures inside a 200 response."""
+    errors = payload.get("errors")
+    if not isinstance(errors, list) or not errors:
+        return
 
-    # Organizing the data so we can use it later.
-    # Missing/null/empty are different observations: preserve absence with
-    # warnings instead of crashing with KeyError (partial failure is not
-    # total failure). Only questionFrontendId blocks the run (identity).
-    _MISSING = object()
-    warnings = []
+    messages = []
+    for error in errors:
+        if isinstance(error, dict):
+            messages.append(str(error.get("message") or error))
+        else:
+            messages.append(str(error))
+    raise CollectionError(f"LeetCode returned an error: {'; '.join(messages)}")
 
-    try:
-        payload = response.json()
-    except ValueError:
-        raise Exception("Failed to fetch challenge: response is not valid JSON")
 
-    data = payload.get("data") if isinstance(payload, dict) else None
+def fetch_graphql(query: str, variables: dict | None = None) -> dict:
+    """POST a GraphQL query and return the decoded payload.
+
+    Connection errors, 429/5xx responses and timeouts are retried with a
+    linear backoff. Other 4xx responses fail immediately: retrying a bad
+    request only wastes the scheduler's time.
+    """
+    body = {"query": query}
+    if variables is not None:
+        body["variables"] = variables
+
+    last_error = "unknown error"
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            response = requests.post(
+                LEETCODE_URL,
+                json=body,
+                headers=_headers(),
+                timeout=30,
+            )
+        except requests.RequestException as e:
+            last_error = f"no connection to LeetCode ({e})"
+        else:
+            if response.status_code == 200:
+                try:
+                    payload = response.json()
+                except ValueError:
+                    raise CollectionError("Failed to fetch challenge: response is not valid JSON")
+                if not isinstance(payload, dict):
+                    raise CollectionError("Failed to fetch challenge: response is not valid JSON")
+                _raise_for_graphql_errors(payload)
+                return payload
+
+            last_error = f"LeetCode responded {response.status_code}"
+            if response.status_code not in RETRYABLE_STATUS:
+                raise CollectionError(f"Failed to fetch challenge: {last_error}")
+
+        if attempt < MAX_ATTEMPTS:
+            time.sleep(RETRY_DELAY_SECONDS * attempt)
+
+    raise CollectionError(
+        f"Failed to fetch challenge after {MAX_ATTEMPTS} attempts: {last_error}"
+    )
+
+
+def fetch_challenge_payload(query: str = DAILY_CHALLENGE_QUERY) -> dict:
+    """Backwards-compatible helper for the original daily query."""
+    return fetch_graphql(query)
+
+
+def get_daily_challenge() -> dict:
+    """Fetch and interpret today's Daily Challenge.
+
+    Returns the internal challenge mapping with a `warnings` list.
+    Raises CollectionError when the response is unusable or the problem
+    identity is missing.
+    """
+    return parse_challenge(fetch_graphql(DAILY_CHALLENGE_QUERY))
+
+
+def list_daily_challenges(year: int, month: int) -> list[dict]:
+    """Return the daily challenge records published for one month.
+
+    Each record has `date`, `link` and a basic `question` mapping. The full
+    statement, topic tags and starter code are fetched separately with
+    `get_question_detail`, so the monthly request stays cheap.
+    """
+    payload = fetch_graphql(
+        DAILY_CHALLENGE_LIST_QUERY,
+        {"year": year, "month": month},
+    )
+
+    data = payload.get("data")
     if not isinstance(data, dict):
-        raise Exception("Failed to fetch challenge: response missing 'data' (layout changed?)")
-
-    raw_data = data.get("activeDailyCodingChallengeQuestion")
-    if raw_data is None:
-        raise Exception("Failed to fetch challenge: response missing 'activeDailyCodingChallengeQuestion' (layout changed?)")
-    if not isinstance(raw_data, dict):
-        raise Exception("Failed to fetch challenge: 'activeDailyCodingChallengeQuestion' in unexpected format")
-
-    question_info = raw_data.get("question")
-    if question_info is None:
-        raise Exception("Failed to fetch challenge: response missing 'question' (layout changed?)")
-    if not isinstance(question_info, dict):
-        raise Exception("Failed to fetch challenge: 'question' in unexpected format")
-
-    # Context for a possible identity failure (all optional, best effort).
-    tmp_title = question_info.get("title")
-    tmp_slug = question_info.get("titleSlug")
-    tmp_date = raw_data.get("date")
-    tmp_link = raw_data.get("link")
-
-    # Identity: questionFrontendId is mandatory. Without it there is no
-    # valid problem record, so stop this problem with context to investigate.
-    question_id = question_info.get("questionFrontendId")
-    if question_id is None or (isinstance(question_id, str) and not question_id.strip()):
-        raise Exception(
-            "Challenge without ID (questionFrontendId missing). Skipping save. "
-            f"Seen: title={tmp_title!r} slug={tmp_slug!r} date={tmp_date!r} link={tmp_link!r}"
+        raise CollectionError("Failed to fetch challenge history: response missing 'data'")
+    month_data = data.get("dailyCodingChallengeV2")
+    if not isinstance(month_data, dict):
+        raise CollectionError(
+            "Failed to fetch challenge history: response missing 'dailyCodingChallengeV2'"
+        )
+    challenges = month_data.get("challenges")
+    if not isinstance(challenges, list):
+        raise CollectionError(
+            "Failed to fetch challenge history: 'challenges' in unexpected format"
         )
 
-    # Optional scalar fields: absent/null/empty become warnings, run continues.
-    for field in ("title", "titleSlug", "difficulty", "content"):
-        if field not in question_info:
-            warnings.append(f"Warning: field '{field}' missing in response — continued anyway")
-        elif question_info.get(field) is None:
-            warnings.append(f"Warning: field '{field}' was null — continued anyway")
+    records = []
+    for item in challenges:
+        if not isinstance(item, dict):
+            continue
+        question = item.get("question")
+        if not isinstance(item.get("date"), str) or not isinstance(question, dict):
+            continue
+        records.append(
+            {
+                "date": item.get("date"),
+                "link": item.get("link"),
+                "question": question,
+            }
+        )
+    return records
 
-    for field in ("date", "link"):
-        if field not in raw_data:
-            warnings.append(f"Warning: field '{field}' missing in response — continued anyway")
-        elif raw_data.get(field) is None:
-            warnings.append(f"Warning: field '{field}' was null — continued anyway")
 
-    # We will always use python, so we just need Python3.
-    python_snippet = ""
-    raw_snippets = question_info.get("codeSnippets", _MISSING)
-    if raw_snippets is _MISSING:
-        warnings.append("Warning: field 'codeSnippets' missing in response — continued without starter code")
-    elif raw_snippets is None:
-        warnings.append("Warning: field 'codeSnippets' was null — continued without starter code")
-    elif not isinstance(raw_snippets, list):
-        warnings.append("Warning: field 'codeSnippets' in unexpected format — continued without starter code")
-    else:
-        for snippet in raw_snippets:
-            if not isinstance(snippet, dict):
-                warnings.append("Warning: 'codeSnippets' item in unexpected format — skipped the item")
-                continue
-            if snippet.get("lang") == "Python3":
-                code = snippet.get("code")
-                if isinstance(code, str):
-                    python_snippet = code
-                else:
-                    warnings.append("Warning: Python3 snippet without valid 'code' — continued without starter code")
-                break
-    
-    # We will extract topics in a string list, later those will be used for organizing the files.
-    # Missing/null/empty topics do not block: file generation falls back to "general".
-    topics = []
-    raw_tags = question_info.get("topicTags", _MISSING)
-    if raw_tags is _MISSING:
-        warnings.append("Warning: field 'topicTags' missing in response — fell back to 'general' folder")
-    elif raw_tags is None:
-        warnings.append("Warning: field 'topicTags' was null — fell back to 'general' folder")
-    elif not isinstance(raw_tags, list):
-        warnings.append("Warning: field 'topicTags' in unexpected format — fell back to 'general' folder")
-    elif len(raw_tags) == 0:
-        warnings.append("Warning: 'topicTags' came back empty [] — fell back to 'general' folder")
-    else:
-        for tag in raw_tags:
-            if not isinstance(tag, dict):
-                warnings.append("Warning: 'topicTags' item in unexpected format — skipped the item")
-                continue
-            name = tag.get("name")
-            if name is None:
-                warnings.append("Warning: topic without 'name' (null) — skipped the item")
-                continue
-            if not isinstance(name, str):
-                warnings.append("Warning: topic with 'name' in unexpected format — skipped the item")
-                continue
-            if not name.strip():
-                warnings.append("Warning: topic with empty name — skipped the item")
-                continue
-            topics.append(name)
+def get_question_detail(title_slug: str) -> dict:
+    """Fetch the full question data needed to generate a solution file."""
+    payload = fetch_graphql(QUESTION_DETAIL_QUERY, {"titleSlug": title_slug})
 
-    # Challenge-level optional fields. Link is derived; never fabricate it.
-    challenge_date = raw_data.get("date")
-    raw_link = raw_data.get("link")
-    if isinstance(raw_link, str) and raw_link.strip():
-        full_link = f"https://leetcode.com{raw_link}"
-    else:
-        full_link = None
-        if raw_link is not None and (not isinstance(raw_link, str) or raw_link.strip()):
-            warnings.append("Warning: field 'link' in unexpected format — continued without link")
+    data = payload.get("data")
+    question = data.get("question") if isinstance(data, dict) else None
+    if not isinstance(question, dict):
+        raise CollectionError(f"Failed to fetch challenge: no question for slug {title_slug!r}")
+    return question
 
-    # This will be the base for the structure in the python file our script will generate
-    formatted_data = {
-        "id": question_id,
-        "date": challenge_date,
-        "title": question_info.get("title"),
-        "slug": question_info.get("titleSlug"),
-        "link": full_link,
-        "difficulty": question_info.get("difficulty"),
-        "content": question_info.get("content"),
-        "topics": topics,
-        "code_snippet": python_snippet,
-        "warnings": warnings,
-    }
 
-    return formatted_data
+def get_challenge_for_record(record: dict) -> dict:
+    """Fetch the full challenge for one record from the monthly history."""
+    question = record.get("question") if isinstance(record, dict) else None
+    title_slug = question.get("titleSlug") if isinstance(question, dict) else None
+    if not isinstance(title_slug, str) or not title_slug.strip():
+        raise CollectionError(
+            "Failed to fetch challenge history: record without a usable titleSlug"
+        )
 
+    detail = get_question_detail(title_slug)
+    occurrence = {"date": record.get("date"), "link": record.get("link")}
+    return parse_question(detail, occurrence)
+
+
+def get_challenge_for_date(day: str | date) -> dict:
+    """Fetch one specific Daily Challenge by date (YYYY-MM-DD)."""
+    if isinstance(day, str):
+        try:
+            day = date.fromisoformat(day)
+        except ValueError:
+            raise CollectionError(f"Invalid date {day!r}; expected YYYY-MM-DD")
+    if not isinstance(day, date):
+        raise CollectionError(f"Invalid date {day!r}; expected YYYY-MM-DD")
+
+    for record in list_daily_challenges(day.year, day.month):
+        if record.get("date") == day.isoformat():
+            return get_challenge_for_record(record)
+
+    raise CollectionError(f"No Daily Challenge found for {day.isoformat()}")

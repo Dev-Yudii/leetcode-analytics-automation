@@ -2,6 +2,59 @@
 This file goal is tracking the project evolution. I'll use it to note down new features, things that broke, fixes I applied, and the tools/best practices I'm learning along the way.
 
 
+## 2026-11-04 (Occurrence ledger + remote runner)
+### What's New
+- **`daily_challenges` occurrence ledger:** a problem can be the Daily Challenge more than once, so the date-to-problem mapping now lives in its own table instead of overloading `problems.challenge_date`. The pipeline records it right after persistence, and the problem row stays idempotent.
+- **Backfill / catch-up (`scripts/backfill.py`):** reads the monthly history from `dailyCodingChallengeV2(year, month)`, finds dates without an occurrence row, and replays the normal pipeline with `question(titleSlug)`. It is idempotent, continues after a failed day, and reports `collected / failed / skipped`. New CLI: `--backfill`, `--since`, `--until`; the default window is `LEETCODE_BACKFILL_DAYS` (60).
+- **GraphQL client hardening:** retry with backoff for 429 and 5xx (`MAX_ATTEMPTS = 3`), browser-like `Origin`/`Referer` headers, and separate queries for the monthly list and the per-slug detail.
+- **Remote runner workflows:** `ci.yml` (tests with a PostgreSQL service), `probe.yml` (manual LeetCode connectivity smoke test from a GitHub runner) and `collect.yml` (00:30 UTC schedule, backfill window, commit to the solutions repo, commit `data/topics.json`, upload log, open an issue on failure). The PAT is scoped to the solutions repository only.
+- **Pilot verified end-to-end:** a clone of the local database was backfilled against the live API. The 4 gaps (2026-10-04, 10-14, 10-18, 10-23) were recovered, taking the clone from 31 to 35 problems/occurrences and 25 to 30 topics; 4 solution files were generated in a temporary directory.
+- **Real backfill applied:** the local production database went from 31 to 35 problems/occurrences and 25 to 30 topics, and the 4 missing templates were created under `C:\Dev\Problem-Solving\LeetCode` without overwriting existing files.
+- **Docs:** README now covers the remote setup, secrets, configuration and free-tier guardrails; architecture §6/§17–§21/§25–§27 describe the implemented occurrence ledger and remote execution.
+- **Tests:** 104 passing, including client retries, gap detection, idempotent replay, repeated-problem occurrences and partial backfill failure.
+
+### Fixes & Tweaks
+- **Schema seed removed from `db/schema.sql`:** the old seed ran on every `ensure_schema()` and pre-empted `record_daily_challenge`, making a real insert look like "unchanged". The bootstrap is now `seed_daily_challenges()`, called once at pipeline start and before gap detection. It remains idempotent.
+- **Apostrophe normalization:** `str.title()` turned `"Fermat's"` into `"Fermat'S"`; normalization now fixes the letter after an apostrophe, and the catalog entry was corrected.
+- **Backfill isolation during the pilot:** the output directory was redirected to a temporary folder and the database was a clone, so no production file or row was touched. The pilot database and temporary files were removed afterwards.
+
+
+## 2026-10-21 (Pass 2 — PostgreSQL)
+### What's New
+- **PostgreSQL is now the operational database:** `docker-compose.yml` runs `postgres:16-alpine` with a persistent volume, and `db/schema.sql` creates `problems`, `topics`, `problem_topics`, `collection_runs` and `collection_events` — the model of docs/architecture.md (§6, §15, §16, §19).
+- **The full topic relationship is stored:** the problem is linked to *every* topic LeetCode returned, not only the first one. The topic IDs come from the versioned catalog `data/topics.json`; the database never invents an ID of its own (§12, §15) and a disagreement between the catalog and the database is an error, not something to repair silently (§13).
+- **The pipeline follows §17 completely:** `collect → validate → determine_file_path → persist → process_topics → persist_problem_topics → generate`.
+- **Collection audit (`collection_runs` / `collection_events`):** every run is registered before the collection starts and closed with its status, the problem and the exit code; every warning becomes an event. This is what finally tells "did not collect" from "collection failed" — the 3 missing days of the old data had no way to be explained.
+- **The legacy SQLite database was exported and migrated:** `scripts/export_legacy.py` writes a CSV archive of the 18 old rows, and `scripts/migrate_legacy.py` rebuilds them in PostgreSQL — reading the complete topic list from the generated files, because the old table had kept only the first topic in a `category` column. The 18 problems now carry 61 topic associations that the old database had lost.
+- **`file_path` is stored as a relative path** (`string/3863_minimum-operations-to-sort-a-string.py`), never a machine-specific absolute path (§8).
+- **Connection timeout:** the database connection fails after 10 seconds instead of hanging, so a scheduler is never stuck on a database that is not answering.
+
+### Fixes & Tweaks
+- **Off-by-one in the upsert:** the row read from the database included the `id` column while the list of completable columns did not, so the comparison was shifted by one and a missing field was never filled. Caught by the new tests.
+- **The `problems` table carries the new columns:** `challenge_date` (instead of the misleading `date_generated`), `in_progress_at`, `concluded_at`, `created_at`, `updated_at` and a `CHECK` constraint on `status` (§10, §10.1).
+
+
+
+
+## 2026-10-21 (Pass 1 — reliability)
+### What's New
+- **Pipeline as callable steps (`scripts/pipeline.py`):** the daily run is now `collect → validate → determine_file_path → persist → process_topics → generate` (architecture §17), with each step isolated and reusable. `main.py` became a thin entry point that only reports the outcome.
+- **Persistence no longer depends on the file (`scripts/persistence.py`):** the problem is stored **before** the file is generated and the file is never the condition to persist a problem. Re-running the pipeline can no longer lose a record — that was the most dangerous bug found in the audit.
+- **Idempotent writes:** re-running the same Daily Challenge reports `inserted`, `enriched` or `unchanged` and never creates a duplicate row. Only fields that are still empty are filled in; a value that was already collected is never overwritten (§18, §20). The rule is isolated in one function so it can be revised when §20 is closed.
+- **Errors state their real cause (§23):** `sqlite3.IntegrityError`, `OperationalError`, `DatabaseError` and `OSError` are handled separately instead of every failure being reported as "Problem already registered". A failing step no longer cancels the others: the run ends as `degraded` and the day is not lost.
+- **Real literal parser (`scripts/translator.py`):** the old blind `replace("true"/"false"/"null")` + comma split is gone. The new parser scans the text, keeps string literals verbatim, converts only standalone tokens outside strings and validates the result with `ast.literal_eval`. `s = "a,b"` no longer becomes `s = "a ; b"` (a SyntaxError) and `"nullable"` is no longer corrupted into `"Noneable"`. A value that cannot be parsed becomes a comment instead of broken code.
+- **Cleaner generated files:** the test block now uses real Python literals instead of `exec()` with injected strings, and the expected output is a value instead of a quoted string, so the printed comparison is accurate.
+- **Run log and exit codes:** every run appends to `logs/pipeline.log` (timestamp, level, message) and `main.py` returns `0` (ok), `1` (nothing collected) or `2` (collected but a step failed) — a scheduler can finally tell success from failure.
+- **Transport separated from interpretation (`scripts/collection.py`):** `leetcode_client.py` only talks to LeetCode; `parse_challenge()` is pure and testable without a network call. The collection rules (missing / null / empty, identity) stayed exactly as they were.
+- **Configurable paths (`scripts/db_utils.py`):** the output folder and the database can be set with `LEETCODE_OUTPUT_DIR` and `LEETCODE_DB_PATH`, so the project no longer depends on a fixed `C:\Dev\Projects\<repo>` layout.
+- **Test coverage:** 66 new tests for the translator, the collection rules, the generator and the pipeline order (76 in total), all green.
+
+### Fixes & Tweaks
+- **Windows console encoding:** printing a non-ASCII title used to raise `UnicodeEncodeError` on the cp1252 console and kill the run. The console is now reconfigured with `errors="replace"`.
+- **HTML entities:** `clean_html` now uses `html.unescape`, so `&amp;lt;` no longer decodes twice and `&nbsp;` no longer leaks into the text.
+- **Example parsing:** only the `Example N:` blocks are read, so an "Input:" mentioned in the description no longer becomes a fake test case.
+- **Committed the collected work:** the 18 generated files (2026-10-01 → 10-21) are now in the solutions repository, and the 14 new topics of `data/topics.json` are versioned here — the catalog is persistent identity and must never be lost (§12.1).
+
 
 ## 2026-10-01
 ### What's New
