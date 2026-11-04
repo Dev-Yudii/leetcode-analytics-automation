@@ -6,6 +6,8 @@ and this module is called before the file is generated, so a problem is
 never lost because a file already exists.
 """
 
+from datetime import date
+
 import psycopg
 
 from scripts.db_utils import apply_schema, get_connection
@@ -13,6 +15,7 @@ from scripts.db_utils import apply_schema, get_connection
 INSERTED = "inserted"
 ENRICHED = "enriched"
 UNCHANGED = "unchanged"
+SKIPPED = "skipped"
 
 # Columns of the problems table that a re-run may complete.
 COMPLETABLE_COLUMNS = ("title", "slug", "link", "difficulty", "challenge_date", "file_path")
@@ -125,6 +128,103 @@ def upsert_problem(data: dict, file_path: str, status: str | None = None) -> str
                     tuple(updates.values()) + (problem_id,),
                 )
                 return ENRICHED
+    except Exception as e:
+        raise _translate(e) from e
+
+
+def seed_daily_challenges() -> int:
+    """Backfill the occurrence ledger from existing problems.
+
+    This is a one-way bootstrap for databases created before the
+    `daily_challenges` table existed. It is idempotent, so running it on
+    every pipeline start is safe.
+    """
+    ensure_schema()
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "INSERT INTO daily_challenges (challenge_date, problem_id)"
+                    " SELECT challenge_date, id FROM problems"
+                    " WHERE challenge_date IS NOT NULL"
+                    " ON CONFLICT (challenge_date) DO NOTHING"
+                )
+                return cursor.rowcount
+    except Exception as e:
+        raise _translate(e) from e
+
+
+def record_daily_challenge(challenge_date, problem_id: str) -> str:
+    """Record which problem was the Daily Challenge on a date.
+
+    The `problems` table keeps one row per problem; this ledger keeps one
+    row per occurrence, so a problem reused years later still has its new
+    date recorded.
+    """
+    if not challenge_date or not problem_id:
+        return SKIPPED
+
+    ensure_schema()
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "SELECT problem_id FROM daily_challenges WHERE challenge_date = %s",
+                    (challenge_date,),
+                )
+                existing = cursor.fetchone()
+                if existing is not None:
+                    if existing[0] == problem_id:
+                        return UNCHANGED
+                    raise PersistenceError(
+                        f"the Daily Challenge on {challenge_date} is already recorded"
+                        f" for problem {existing[0]}, not {problem_id}"
+                    )
+
+                cursor.execute(
+                    "INSERT INTO daily_challenges (challenge_date, problem_id)"
+                    " VALUES (%s, %s) ON CONFLICT (challenge_date) DO NOTHING",
+                    (challenge_date, problem_id),
+                )
+                return INSERTED if cursor.rowcount else UNCHANGED
+    except PersistenceError:
+        raise
+    except Exception as e:
+        raise _translate(e) from e
+
+
+def get_covered_dates(start: date, end: date) -> set[str]:
+    """Return the ISO dates that already have a Daily Challenge record."""
+    ensure_schema()
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "SELECT challenge_date FROM daily_challenges"
+                    " WHERE challenge_date BETWEEN %s AND %s",
+                    (start, end),
+                )
+                return {
+                    value.isoformat() if hasattr(value, "isoformat") else str(value)
+                    for (value,) in cursor.fetchall()
+                }
+    except Exception as e:
+        raise _translate(e) from e
+
+
+def get_recorded_date_bounds() -> tuple[date | None, date | None]:
+    """Return the first and last Daily Challenge dates in the ledger."""
+    ensure_schema()
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "SELECT MIN(challenge_date), MAX(challenge_date) FROM daily_challenges"
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    return None, None
+                return row[0], row[1]
     except Exception as e:
         raise _translate(e) from e
 

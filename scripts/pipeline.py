@@ -3,7 +3,7 @@
 The order follows docs/architecture.md (section 17):
 
     collect -> validate -> determine file_path -> persist problem
-            -> process topics -> generate file
+            -> record daily occurrence -> process topics -> generate file
 
 Two rules shape the code:
     * generating the file is never the condition to persist a problem;
@@ -21,6 +21,8 @@ from scripts.persistence import (
     add_event,
     finish_run,
     link_problem_topics,
+    record_daily_challenge,
+    seed_daily_challenges,
     start_run,
     sync_topics,
     upsert_problem,
@@ -150,6 +152,13 @@ def run_daily(logger=None, collector=None) -> RunResult:
 
     result = RunResult()
 
+    # Older databases may have problems without an occurrence row. Bootstrap
+    # the ledger before anything else, without blocking an offline run.
+    try:
+        seed_daily_challenges()
+    except Exception as e:
+        logger.warning(f"could not seed the daily challenge ledger: {e}")
+
     # The run is registered before anything happens, so a failure is
     # recorded too and "not collected" can be told from "collection failed".
     run_id = None
@@ -224,7 +233,23 @@ def run_daily(logger=None, collector=None) -> RunResult:
         add_event(run_id, "ERROR", "persist", repr(e))
         result.status = DEGRADED
 
-    # 5. process topics (versioned catalog)
+    # 5. record the daily occurrence (a problem can be reused on another day)
+    try:
+        occurrence = record_daily_challenge(data.get("date"), data.get("id"))
+        logger.info(f"Daily challenge: {occurrence} ({data.get('date')})")
+        result.steps.append(StepOutcome("record_daily_challenge", OK, occurrence))
+    except PersistenceError as e:
+        logger.error(f"Daily challenge record failed: {e}")
+        result.steps.append(StepOutcome("record_daily_challenge", FAILED, str(e)))
+        add_event(run_id, "ERROR", "record_daily_challenge", str(e))
+        result.status = DEGRADED
+    except Exception as e:
+        logger.error(f"Daily challenge record failed (unexpected): {e!r}")
+        result.steps.append(StepOutcome("record_daily_challenge", FAILED, repr(e)))
+        add_event(run_id, "ERROR", "record_daily_challenge", repr(e))
+        result.status = DEGRADED
+
+    # 6. process topics (versioned catalog)
     topic_ids = {}
     try:
         topic_ids = process_topics(data, logger=logger)
@@ -237,7 +262,7 @@ def run_daily(logger=None, collector=None) -> RunResult:
         add_event(run_id, "ERROR", "process_topics", repr(e))
         result.status = DEGRADED
 
-    # 6. persist the topic relationship
+    # 7. persist the topic relationship
     try:
         linked = persist_topics(data.get("id"), topic_ids)
         logger.info(f"Problem topics: {linked} new association(s)")
@@ -253,7 +278,7 @@ def run_daily(logger=None, collector=None) -> RunResult:
         add_event(run_id, "ERROR", "persist_problem_topics", repr(e))
         result.status = DEGRADED
 
-    # 7. generate the file
+    # 8. generate the file
     try:
         path = generate(data, file_path=file_path)
         logger.info(f"File: {path}")

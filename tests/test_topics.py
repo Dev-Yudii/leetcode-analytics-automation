@@ -35,6 +35,7 @@ class TestTopicsCatalog:
         assert normalize_topic_name("two pointers") == "Two Pointers"
         assert normalize_topic_name("Two Pointers") == "Two Pointers"
         assert normalize_topic_name("  dynamic programming  ") == "Dynamic Programming"
+        assert normalize_topic_name("fermat's little theorem") == "Fermat's Little Theorem"
 
     def test_empty_catalog(self):
         catalog = load_catalog()

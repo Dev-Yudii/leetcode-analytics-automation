@@ -66,5 +66,57 @@
   {
     "id": 17,
     "name": "Math"
+  },
+  {
+    "id": 18,
+    "name": "Depth-First Search"
+  },
+  {
+    "id": 19,
+    "name": "Union-Find"
+  },
+  {
+    "id": 20,
+    "name": "Matrix"
+  },
+  {
+    "id": 21,
+    "name": "Divide And Conquer"
+  },
+  {
+    "id": 22,
+    "name": "Tree"
+  },
+  {
+    "id": 23,
+    "name": "Graph Theory"
+  },
+  {
+    "id": 24,
+    "name": "Shortest Path"
+  },
+  {
+    "id": 25,
+    "name": "Sliding Window"
+  },
+  {
+    "id": 26,
+    "name": "Binary Search Tree"
+  },
+  {
+    "id": 27,
+    "name": "Memoization"
+  },
+  {
+    "id": 28,
+    "name": "Combinatorics"
+  },
+  {
+    "id": 29,
+    "name": "Binary Tree"
+  },
+  {
+    "id": 30,
+    "name": "Fermat's Little Theorem"
   }
 ]

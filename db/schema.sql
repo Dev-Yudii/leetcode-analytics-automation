@@ -25,6 +25,15 @@ CREATE TABLE IF NOT EXISTS problems (
     CONSTRAINT problems_status_check CHECK (status IN ('PENDING', 'IN_PROGRESS', 'CONCLUDED'))
 );
 
+-- Which problem was the Daily Challenge on each date. A problem can be
+-- reused as a Daily Challenge on another day (§20), so this occurrence
+-- ledger is separate from the problem catalog.
+CREATE TABLE IF NOT EXISTS daily_challenges (
+    challenge_date DATE PRIMARY KEY,
+    problem_id     VARCHAR(20) NOT NULL REFERENCES problems(id) ON DELETE CASCADE,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Every topic returned by LeetCode is kept, not only the first one (§9, §11).
 CREATE TABLE IF NOT EXISTS problem_topics (
     problem_id VARCHAR(20) NOT NULL REFERENCES problems(id) ON DELETE CASCADE,
@@ -55,4 +64,5 @@ CREATE TABLE IF NOT EXISTS collection_events (
 );
 
 CREATE INDEX IF NOT EXISTS problems_challenge_date_idx ON problems (challenge_date);
+CREATE INDEX IF NOT EXISTS daily_challenges_problem_id_idx ON daily_challenges (problem_id);
 CREATE INDEX IF NOT EXISTS collection_events_run_idx ON collection_events (run_id);

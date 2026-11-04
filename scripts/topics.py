@@ -9,8 +9,13 @@ ILLEGAL_PATH_CHARS = re.compile(r'[<>:"/\\|?*]')
 
 
 def normalize_topic_name(name: str) -> str:
-    """Normalize topic name deterministically."""
-    return name.strip().title()
+    """Normalize topic name deterministically.
+
+    `str.title()` capitalizes the letter after an apostrophe
+    ("Fermat's" -> "Fermat'S"), so fix that specific case.
+    """
+    normalized = name.strip().title()
+    return re.sub(r"'([A-Z])", lambda match: "'" + match.group(1).lower(), normalized)
 
 
 def folder_name_for_topic(name: str) -> str:

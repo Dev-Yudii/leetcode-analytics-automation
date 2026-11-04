@@ -2,6 +2,23 @@
 This file goal is tracking the project evolution. I'll use it to note down new features, things that broke, fixes I applied, and the tools/best practices I'm learning along the way.
 
 
+## 2026-11-04 (Occurrence ledger + remote runner)
+### What's New
+- **`daily_challenges` occurrence ledger:** a problem can be the Daily Challenge more than once, so the date-to-problem mapping now lives in its own table instead of overloading `problems.challenge_date`. The pipeline records it right after persistence, and the problem row stays idempotent.
+- **Backfill / catch-up (`scripts/backfill.py`):** reads the monthly history from `dailyCodingChallengeV2(year, month)`, finds dates without an occurrence row, and replays the normal pipeline with `question(titleSlug)`. It is idempotent, continues after a failed day, and reports `collected / failed / skipped`. New CLI: `--backfill`, `--since`, `--until`; the default window is `LEETCODE_BACKFILL_DAYS` (60).
+- **GraphQL client hardening:** retry with backoff for 429 and 5xx (`MAX_ATTEMPTS = 3`), browser-like `Origin`/`Referer` headers, and separate queries for the monthly list and the per-slug detail.
+- **Remote runner workflows:** `ci.yml` (tests with a PostgreSQL service), `probe.yml` (manual LeetCode connectivity smoke test from a GitHub runner) and `collect.yml` (00:30 UTC schedule, backfill window, commit to the solutions repo, commit `data/topics.json`, upload log, open an issue on failure). The PAT is scoped to the solutions repository only.
+- **Pilot verified end-to-end:** a clone of the local database was backfilled against the live API. The 4 gaps (2026-10-04, 10-14, 10-18, 10-23) were recovered, taking the clone from 31 to 35 problems/occurrences and 25 to 30 topics; 4 solution files were generated in a temporary directory.
+- **Real backfill applied:** the local production database went from 31 to 35 problems/occurrences and 25 to 30 topics, and the 4 missing templates were created under `C:\Dev\Problem-Solving\LeetCode` without overwriting existing files.
+- **Docs:** README now covers the remote setup, secrets, configuration and free-tier guardrails; architecture §6/§17–§21/§25–§27 describe the implemented occurrence ledger and remote execution.
+- **Tests:** 104 passing, including client retries, gap detection, idempotent replay, repeated-problem occurrences and partial backfill failure.
+
+### Fixes & Tweaks
+- **Schema seed removed from `db/schema.sql`:** the old seed ran on every `ensure_schema()` and pre-empted `record_daily_challenge`, making a real insert look like "unchanged". The bootstrap is now `seed_daily_challenges()`, called once at pipeline start and before gap detection. It remains idempotent.
+- **Apostrophe normalization:** `str.title()` turned `"Fermat's"` into `"Fermat'S"`; normalization now fixes the letter after an apostrophe, and the catalog entry was corrected.
+- **Backfill isolation during the pilot:** the output directory was redirected to a temporary folder and the database was a clone, so no production file or row was touched. The pilot database and temporary files were removed afterwards.
+
+
 ## 2026-10-21 (Pass 2 — PostgreSQL)
 ### What's New
 - **PostgreSQL is now the operational database:** `docker-compose.yml` runs `postgres:16-alpine` with a persistent volume, and `db/schema.sql` creates `problems`, `topics`, `problem_topics`, `collection_runs` and `collection_events` — the model of docs/architecture.md (§6, §15, §16, §19).

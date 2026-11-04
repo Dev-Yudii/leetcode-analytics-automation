@@ -184,7 +184,7 @@ The system should not automatically interpret an empty list as a universal state
 
 # 6. PostgreSQL — problems
 
-The planned `problems` table is:
+The implemented `problems` table is:
 
 ```text
 problems
@@ -197,10 +197,12 @@ problems
 ├── file_path
 ├── status
 ├── in_progress_at
-└── concluded_at
+├── concluded_at
+├── created_at
+└── updated_at
 ```
 
-Planned structure:
+Implemented structure (`db/schema.sql`):
 
 ```sql
 id               VARCHAR(20) PRIMARY KEY NOT NULL
@@ -213,9 +215,22 @@ file_path        TEXT NOT NULL
 status           TEXT NOT NULL DEFAULT 'PENDING'
 in_progress_at   TIMESTAMPTZ NULL
 concluded_at     TIMESTAMPTZ NULL
+created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 ```
 
 Fields other than `id` and `file_path` may be `NULL` when the source does not provide the corresponding information.
+
+The occurrence ledger is a separate table:
+
+```sql
+daily_challenges
+├── challenge_date DATE PRIMARY KEY
+├── problem_id     VARCHAR(20) REFERENCES problems(id) ON DELETE CASCADE
+└── created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+```
+
+`problems.challenge_date` is the date observed in the row's original collection. `daily_challenges` is the authoritative date-to-problem mapping and supports the same problem being reused on another date.
 
 ---
 
@@ -589,6 +604,8 @@ determine file_path
    ↓
 persist problem
    ↓
+record daily occurrence
+   ↓
 process topics
    ↓
 persist problem_topics
@@ -596,9 +613,9 @@ persist problem_topics
 generate file
 ```
 
-The current implementation may not follow this order yet and must be refactored toward it.
+This is the implemented order in `scripts/pipeline.py`. File generation must not be the condition that determines whether a problem can be persisted.
 
-In particular, file generation must not be the condition that determines whether a problem can be persisted.
+The occurrence step is separate from problem persistence because the same problem can be the Daily Challenge more than once. It writes to `daily_challenges`, not to a second `problems` row.
 
 ---
 
@@ -618,7 +635,7 @@ The system must distinguish between:
 * a newly discovered topic;
 * a new collection anomaly.
 
-The exact historical behavior for repeated collections and changing source data remains to be finalized.
+Repeated Daily Challenges are recorded in `daily_challenges` without duplicating the problem. Source fields that change after collection (for example a title correction) remain an open historical-data question; the current rule is to fill empty fields but not overwrite values that were already collected.
 
 ---
 
@@ -648,14 +665,14 @@ When possible, a warning should preserve information such as:
 * reason;
 * available source information.
 
-The project may later introduce a more complete audit model such as:
+The audit model is implemented as:
 
 ```text
 collection_runs
 collection_events
 ```
 
-but this is not required for the first implementation.
+`collection_runs` records the attempt and its outcome; `collection_events` stores the warnings observed during it. This is what allows the system to distinguish "the day was not collected" from "the collection failed" (§21).
 
 ---
 
@@ -665,14 +682,17 @@ The project values historical information for future analysis.
 
 The implementation should avoid unnecessarily overwriting information when doing so would destroy useful historical context.
 
-Future design work must address:
+The implemented design covers:
 
-* repeated collection of the same problem;
-* source fields that change over time;
+* repeated collection of the same problem — `problems` is idempotent; `daily_challenges` stores each occurrence;
+* replaying old Daily Challenges — the monthly history plus `question(titleSlug)` feeds the backfill;
+* distinguishing current state from historical observations — `collection_runs` and `collection_events` keep the audit.
+
+Still open:
+
+* source fields that change over time (title corrections, for example);
 * fields that were previously missing and later become available;
-* changes in topic assignments;
-* replaying old Daily Challenges;
-* distinguishing current state from historical observations.
+* changes in topic assignments over time.
 
 This part of the model is not considered fully closed yet.
 
@@ -680,19 +700,17 @@ This part of the model is not considered fully closed yet.
 
 # 21. Current database migration
 
-The project previously used SQLite.
+The project previously used SQLite and now uses PostgreSQL.
 
-The target architecture uses PostgreSQL.
-
-The old SQLite implementation should not be treated as the final data model.
-
-The migration should eventually remove assumptions such as:
+The migration removed the old assumptions:
 
 * the old `category` column;
 * `date_generated`;
 * storing the entire problem content;
 * using the first topic as the database category;
 * conflating database insertion errors with duplicate records.
+
+The legacy SQLite file was exported to CSV and migrated. It can be deleted once the PostgreSQL setup is considered stable.
 
 ---
 
@@ -801,6 +819,33 @@ The two repositories should remain loosely coupled.
 
 The automation project should not attempt to replace the solution repository.
 
+## 25.1 Remote execution
+
+The production schedule runs on GitHub Actions, not on the user's machine:
+
+```text
+GitHub Actions cron (00:30 UTC)
+    ↓
+Python pipeline
+    ├── Neon PostgreSQL (metadata)
+    └── Dev-Yudii/leetcode (generated .py)
+```
+
+The workflow has three responsibilities:
+
+* `ci.yml` runs the test suite against a PostgreSQL service container;
+* `probe.yml` checks that a GitHub runner can reach LeetCode before the schedule depends on it;
+* `collect.yml` runs the backfill window, collects today, commits the generated file, commits `data/topics.json`, uploads the log and opens an issue on failure.
+
+Authentication uses two secrets:
+
+* `LEETCODE_DB_URL` — the Neon connection string;
+* `SOLUTIONS_REPO_TOKEN` — a fine-grained PAT scoped to the solutions repository with Contents read/write.
+
+The automation repository itself uses the built-in `GITHUB_TOKEN`.
+
+The catch-up window (`LEETCODE_BACKFILL_DAYS`, default 60) makes the schedule self-healing: if GitHub delays a run or LeetCode is temporarily unavailable, the next successful run fills the gap.
+
 ---
 
 # 26. Backup and persistence
@@ -809,13 +854,19 @@ GitHub provides versioning and remote persistence for repository files.
 
 Docker volumes provide database persistence across container recreation but are not themselves a complete backup strategy.
 
-A future independent PostgreSQL backup should be considered, such as:
+An independent PostgreSQL backup is now more important because production metadata lives in Neon:
 
 ```text
 pg_dump
 ```
 
-The database backup strategy is not part of the first implementation.
+The manual backup command is documented in the README. A scheduled backup is still pending; the Neon free plan does not replace an owned dump.
+
+Free-tier guardrails:
+
+* GitHub Actions is free for public repositories and has 2,000 minutes/month on private ones; keep the spending limit at $0 and use `ubuntu-latest`.
+* Neon Free scales to zero and includes 100 CU-hours and 1 GB per project/month; a daily job uses a small fraction of that.
+* Artifact retention is 14 days and the monthly LeetCode history is only requested by the backfill, not by a healthy daily run.
 
 ---
 
@@ -828,11 +879,15 @@ The Python pipeline should first become reliable and understandable without Airf
 A possible future DAG is:
 
 ```text
+detect_missing_dates
+      ↓
 collect_daily
       ↓
 validate_data
       ↓
 persist_problem
+      ↓
+record_daily_challenge
       ↓
 process_topics
       ↓
@@ -861,7 +916,10 @@ Examples:
 
 * PostgreSQL is justified by relational storage and future analysis.
 * `topics.json` is justified by the need for stable topic identity across rebuilds.
-* Airflow is justified when orchestration becomes useful.
+* GitHub Actions is justified because the collection must run while the home machine is off.
+* Neon is justified because a scheduled remote runner needs a database that is not on the home network.
+* `daily_challenges` is justified because the same problem can be reused as a Daily Challenge.
+* Airflow is justified when orchestration becomes useful; the current cron + catch-up window is enough for one daily job.
 * Additional infrastructure should only be introduced when the project has a concrete need for it.
 
 The goal is a coherent system, not a collection of technologies.

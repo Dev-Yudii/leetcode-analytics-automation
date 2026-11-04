@@ -1,0 +1,127 @@
+name: Daily challenge collection
+
+on:
+  schedule:
+    # 00:30 UTC: the Daily Challenge changes at 00:00 UTC.
+    - cron: "30 0 * * *"
+  workflow_dispatch:
+    inputs:
+      backfill:
+        description: "Check for missing days before collecting today"
+        type: boolean
+        default: true
+      since:
+        description: "Backfill start date (YYYY-MM-DD); optional"
+        required: false
+        type: string
+      until:
+        description: "Backfill end date (YYYY-MM-DD); default: yesterday UTC"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: daily-challenge-collection
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      LEETCODE_DB_URL: ${{ secrets.LEETCODE_DB_URL }}
+      LEETCODE_DB_TIMEOUT: "30"
+      LEETCODE_OUTPUT_DIR: ${{ github.workspace }}/solutions
+
+    steps:
+      - name: Checkout automation repo
+        uses: actions/checkout@v4
+
+      - name: Checkout solutions repo
+        uses: actions/checkout@v4
+        with:
+          repository: Dev-Yudii/leetcode
+          token: ${{ secrets.SOLUTIONS_REPO_TOKEN }}
+          path: solutions
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Backfill gaps
+        id: backfill
+        if: ${{ github.event_name == 'schedule' || inputs.backfill }}
+        continue-on-error: true
+        env:
+          SINCE: ${{ inputs.since }}
+          UNTIL: ${{ inputs.until }}
+        run: |
+          args=()
+          if [ -n "$SINCE" ]; then args+=(--since "$SINCE"); fi
+          if [ -n "$UNTIL" ]; then args+=(--until "$UNTIL"); fi
+          uv run python main.py --backfill "${args[@]}"
+
+      - name: Collect today's challenge
+        run: uv run python main.py
+
+      - name: Commit topic catalog
+        if: always()
+        run: |
+          if [ -z "$(git status --porcelain -- data/topics.json)" ]; then
+            echo "Topic catalog unchanged."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/topics.json
+          git commit -m "chore: update topic catalog [skip ci]"
+          git push
+
+      - name: Commit generated solutions
+        if: always()
+        working-directory: solutions
+        run: |
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "No generated solutions to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "chore: daily challenge $(date -u +%F)"
+          git push
+
+      - name: Upload pipeline log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-log
+          path: logs/pipeline.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Fail if backfill was incomplete
+        if: steps.backfill.outcome == 'failure'
+        run: exit 1
+
+      - name: Open failure issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --title "Pipeline failure: $(date -u +%F)" \
+            --body "The scheduled pipeline failed. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

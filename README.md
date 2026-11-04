@@ -1,9 +1,11 @@
 # Personal LeetCode Automation & Data Pipeline
 
 ## Description
-Personal data pipeline that fetches the LeetCode Daily Challenge via GraphQL (one request per day, no login), validates the response into metadata + collection warnings, tracks topic identity in a versioned catalog, generates a pre-filled Python template — header, starter code and local tests — so I can solve and push to GitHub without hand-editing anything that changes daily, and logs metadata into a local database (SQLite today, PostgreSQL planned).
+Personal data pipeline that fetches the LeetCode Daily Challenge via GraphQL (one request per day, no login), validates the response into metadata + collection warnings, tracks topic identity in a versioned catalog, generates a pre-filled Python template — header, starter code and local tests — so I can solve and push to GitHub without hand-editing anything that changes daily, and records the metadata in PostgreSQL.
 
 The generated file is a local practice workspace: it opens in any Python 3 environment (e.g. VS Code) for solving and local test runs; the full submission, with all test cases, happens on LeetCode. Solved files live in the separate [LeetCode Solutions](https://github.com/Dev-Yudii/leetcode) repository; this repo holds only the automation.
+
+The pipeline also supports recovering missed days. LeetCode exposes a monthly Daily Challenge history, so a scheduled run can detect gaps in the database and backfill them when it comes back online.
 
 
 ## Disclaimer
@@ -16,39 +18,55 @@ Personal, educational data-pipeline project. Not affiliated with, endorsed, or s
 
 
 ## About This Project
-This project started with a simple daily frustration: I wanted to keep my LeetCode Daily Challenge solutions organized, and track my progress on GitHub without wasting time manually copying templates and code snippets. 
+This project started with a simple daily frustration: I wanted to keep my LeetCode Daily Challenge solutions organized, and track my progress on GitHub without wasting time manually copying templates and code snippets.
 
 As someone studying **Data Analytics and Data Engineering**, I realized that instead of just creating a repository of static files, I could build a local automation tool that doubles as a personal data pipeline. Every day it collects the challenge metadata and grows a history of my own solving behavior. In the future, that dataset will feed a Business Intelligence (BI) dashboard with insights about my learning curve and performance — for now, the pipeline's job is to collect reliably, one day at a time.
 
 
 ## Data Source & Collection Strategy
-LeetCode offers no conventional REST API — only a GraphQL endpoint. That shaped the project: one tailored query per day fetches exactly what's needed (problem ID, title, difficulty, topic tags, statement HTML for test extraction, and the official Python3 starter snippet), with no login and no extra traffic.
+LeetCode offers no conventional REST API — only a GraphQL endpoint. That shaped the project:
+- `activeDailyCodingChallengeQuestion` fetches exactly what is needed for today's challenge: identity, difficulty, topics, statement HTML for test extraction, and the official Python3 starter snippet.
+- `dailyCodingChallengeV2(year, month)` lists the challenges of a month, which lets the backfill find missing dates.
+- `question(titleSlug)` fetches the full data for a specific problem when replaying a past day.
+
+No login, no credentials, and no extra traffic during a healthy daily run.
 
 
-## Current Tech Stack (Phase 2)
-The project is currently built as a lightweight local Automation Script (MVP):
-* **Python 3**: The core programming language for the automation logic.
-* **Requests**: To communicate with LeetCode's GraphQL API.
-* **PostgreSQL (Docker)**: The operational relational database — `problems`, `topics`, `problem_topics` and the collection audit tables. It replaces the old SQLite file.
-* **psycopg 3**: The PostgreSQL driver.
-* **Pathlib & RE (Python Standard Libraries)**: For dynamic file/folder creation based on problem topics, and regular expressions to extract clean test cases from HTML descriptions.
-* **ast (Python Standard Library)**: To parse the LeetCode examples into real Python literals, instead of rewriting the text blindly.
+## Current Tech Stack
+* **Python 3.13**: the core programming language for the automation logic.
+* **Requests**: to communicate with LeetCode's GraphQL API.
+* **PostgreSQL**: the operational database. Neon is the production database; Docker Compose provides a local development/test instance.
+* **psycopg 3**: the PostgreSQL driver.
+* **GitHub Actions**: scheduled daily collection, tests and connectivity probe.
+* **uv**: dependency and environment management.
+* **Pathlib & RE**: dynamic folders and test extraction from HTML.
+* **ast**: parsing LeetCode examples into real Python literals instead of rewriting text blindly.
 
 
 ## How It Works
-1. **Fetch**: The script connects to LeetCode and pulls the active daily challenge data (one request per day, no login).
-2. **Validate**: The response is checked field by field. Missing `questionFrontendId` blocks the run (no valid identity); any other missing/null/empty field becomes a collection warning and the run continues.
-3. **Persist**: The problem is registered into PostgreSQL, initializing its status as `PENDING`. Re-running never creates a duplicate and never overwrites a value that was already collected.
-4. **Topics**: Topic names are normalized and registered incrementally into the versioned `data/topics.json` catalog (stable IDs, never reused). The same IDs are written to the `topics` table, and the problem is linked to **all** of its topics in `problem_topics`.
-5. **Generate**: It creates a ready-to-solve Python file named after the primary key (`{ID}_{slug}.py`) under the first topic's folder, with metadata header, starter code and auto-parsed local test cases. An existing file is never overwritten.
+1. **Fetch**: one GraphQL request to LeetCode for today's challenge.
+2. **Validate**: the response is checked field by field. Missing `questionFrontendId` blocks the run (no valid identity); any other missing/null/empty field becomes a collection warning and the run continues.
+3. **Persist**: the problem is registered in PostgreSQL with status `PENDING`. Re-running never creates a duplicate and never overwrites a value that was already collected.
+4. **Record occurrence**: `daily_challenges` records which problem was the Daily Challenge on that date. A problem can be reused on another day, so this ledger is separate from the problem catalog.
+5. **Topics**: names are normalized and registered in the versioned `data/topics.json` catalog (stable IDs, never reused). The same IDs are written to `topics`, and the problem is linked to all its topics in `problem_topics`.
+6. **Generate**: a ready-to-solve file named `{ID}_{slug}.py` is created under the first topic's folder, with metadata, starter code and local tests. An existing file is never overwritten.
 
-Every step is isolated: a failure in one of them does not cancel the others, it marks the run as *degraded* instead of losing the day. Each run is recorded in `collection_runs`, and every warning becomes a `collection_events` row — that is what tells "did not collect" from "collection failed".
+Every step is isolated: a failure in one of them does not cancel the others, it marks the run as *degraded* instead of losing the day. `collection_runs` and `collection_events` keep the audit — that is what tells "did not collect" from "collection failed".
+
+
+## Data Model
+- `problems`: one row per LeetCode problem.
+- `daily_challenges`: one row per date, pointing to the problem that was the Daily Challenge. This records repeated challenges correctly.
+- `topics` / `problem_topics`: topic identity from `data/topics.json` and its associations.
+- `collection_runs` / `collection_events`: collection audit and warnings.
+
+The full design is in [docs/architecture.md](./docs/architecture.md).
 
 
 ## Running
 
 ```bash
-# 1. the database (Docker)
+# 1. the local database (Docker)
 docker compose up -d
 
 # 2. the daily collection
@@ -57,23 +75,75 @@ uv run python main.py
 
 The run appends to `logs/pipeline.log` and exits with `0` (everything went fine), `1` (nothing was collected) or `2` (collected, but a step failed) — so a scheduler can tell success from failure.
 
+### Recovering missed days
+
+```bash
+# check the last 60 days and recover gaps (default)
+uv run python main.py --backfill
+
+# full historical recovery
+uv run python main.py --backfill --since 2026-10-01 --until 2026-10-31
+```
+
+Backfill detects dates without a `daily_challenges` row, fetches the monthly history, and runs the normal pipeline for each missing day. It is idempotent and continues when one day fails. With no `--since`, the daily scheduled run checks the last `LEETCODE_BACKFILL_DAYS` days.
+
 ### Configuration
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `LEETCODE_DB_URL` | `postgresql://leetcode:leetcode_local_dev@localhost:5432/leetcode_analytics` | Operational database |
+| `LEETCODE_TEST_DB_URL` | derived from `LEETCODE_DB_URL` | Separate database used by the tests |
 | `LEETCODE_OUTPUT_DIR` | `<user>/Problem-Solving/LeetCode` | Where the solution files live |
 | `LEETCODE_DB_TIMEOUT` | `10` | Seconds to wait for the database |
+| `LEETCODE_BACKFILL_DAYS` | `60` | Lookback window when `--since` is omitted |
 
 ### Database tasks
 
 ```bash
-uv run python scripts/db_utils.py     # run any SQL query
-uv run python scripts/export_legacy.py # archive the old SQLite database
+uv run python scripts/db_utils.py       # run any SQL query
+uv run python scripts/export_legacy.py  # archive the old SQLite database
 uv run python scripts/migrate_legacy.py # migrate the old rows into PostgreSQL
+
+# independent backup (a Docker volume is not a backup)
+docker exec leetcode-postgres pg_dump -U leetcode -d leetcode_analytics \
+  --no-owner --no-privileges > backup.sql
 ```
 
-> Design decisions (identity, topic catalog, pipeline order) live in [docs/architecture.md](./docs/architecture.md); the working plan lives in [TODO.md](./TODO.md).
+
+## Remote automation (GitHub Actions + Neon)
+
+The daily job is designed to run even when the home computer is off:
+
+```text
+GitHub Actions (00:30 UTC)
+  ├─ recover gaps from the monthly LeetCode history
+  ├─ collect today's challenge
+  ├─ persist in Neon
+  ├─ commit the generated .py to Dev-Yudii/leetcode
+  ├─ commit data/topics.json back to this repo
+  └─ upload the log and open an issue on failure
+```
+
+Workflows:
+- `.github/workflows/ci.yml`: tests against a PostgreSQL service container.
+- `.github/workflows/probe.yml`: manual smoke test of LeetCode connectivity from a GitHub runner.
+- `.github/workflows/collect.yml`: daily schedule, manual `workflow_dispatch`, backfill, commits and alerting.
+
+Required repository secrets:
+- `LEETCODE_DB_URL`: the Neon connection string (include `sslmode=require` if required by the provider).
+- `SOLUTIONS_REPO_TOKEN`: fine-grained PAT with **Contents: Read and write** on `Dev-Yudii/leetcode` only.
+
+The workflow uses the built-in `GITHUB_TOKEN` to push `data/topics.json` back to this repo and to open failure issues. The PAT is only for the solutions repository.
+
+Run `probe.yml` manually after the first push: it proves that a GitHub runner can reach LeetCode before the schedule depends on it. If LeetCode blocks the runner IP, the daily job fails visibly and the next successful run recovers the gap.
+
+### Free-tier guardrails
+- GitHub Actions: free for public repositories; 2,000 minutes/month on a private repo. Keep the spending limit at $0.
+- Neon Free: 100 CU-hours and 1 GB per project/month, with scale-to-zero. A daily job uses a tiny fraction of this.
+- Keep artifact retention at 14 days and use only `ubuntu-latest` runners.
+- Take periodic `pg_dump` backups; the free plan has a short restore window.
+- The monthly history request is only made by the backfill, not by a healthy daily run.
+- GitHub disables scheduled workflows after 60 days of repository inactivity; any push re-enables the schedule.
 
 
 ## Roadmap
@@ -81,7 +151,9 @@ uv run python scripts/migrate_legacy.py # migrate the old rows into PostgreSQL
 - [x] Topic catalog with stable IDs + collection warnings
 - [x] PostgreSQL (`problems`, `topics`, `problem_topics`) + collection audit
 - [x] Idempotent pipeline (safe to re-run, safe to schedule)
+- [x] `daily_challenges` occurrence ledger + backfill/catch-up
+- [ ] Deploy the GitHub Actions schedule against Neon
+- [ ] Scheduled `pg_dump` backups
 - [ ] Airflow DAG: `collect → validate → persist → process_topics → generate`
-- [ ] Scheduled daily run and `pg_dump` backups
 
 See [TODO.md](./TODO.md) for the current working plan and [CHANGELOG.md](./CHANGELOG.md) for history.

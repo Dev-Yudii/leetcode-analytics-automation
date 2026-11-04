@@ -43,6 +43,7 @@ class TestRunOrder:
             "validate",
             "determine_file_path",
             "persist",
+            "record_daily_challenge",
             "process_topics",
             "persist_problem_topics",
             "generate",
@@ -60,6 +61,21 @@ class TestRunOrder:
         stored = read_problems()[0]["file_path"]
         assert ":" not in stored
         assert not stored.startswith("C")
+
+    def test_records_the_daily_challenge_occurrence(self, sample_challenge, temp_output_dir, temp_catalog):
+        result = run_daily(logger=FakeLogger(), collector=lambda: sample_challenge)
+        assert result.step("record_daily_challenge").detail == "inserted"
+        rows = execute_query("SELECT challenge_date, problem_id FROM daily_challenges")
+        assert len(rows) == 1
+        assert str(rows[0]["challenge_date"]) == "2026-10-21"
+        assert rows[0]["problem_id"] == "3863"
+
+    def test_missing_date_is_recorded_as_skipped(self, sample_challenge, temp_output_dir, temp_catalog):
+        sample_challenge["date"] = None
+        result = run_daily(logger=FakeLogger(), collector=lambda: sample_challenge)
+        assert result.step("record_daily_challenge").detail == "skipped"
+        rows = execute_query("SELECT challenge_date FROM daily_challenges")
+        assert rows == []
 
     def test_registers_the_topics_in_the_catalog(self, sample_challenge, temp_output_dir, temp_catalog):
         run_daily(logger=FakeLogger(), collector=lambda: sample_challenge)
@@ -146,6 +162,23 @@ class TestIdempotency:
         result = run_daily(logger=FakeLogger(), collector=lambda: changed)
         assert result.step("persist").detail == "unchanged"
         assert read_problems()[0]["title"] == "Minimum Operations to Sort a String"
+
+    def test_repeated_problem_records_each_daily_occurrence(self, sample_challenge, temp_output_dir, temp_catalog):
+        run_daily(logger=FakeLogger(), collector=lambda: sample_challenge)
+
+        repeated = dict(sample_challenge)
+        repeated["date"] = "2026-10-22"
+        result = run_daily(logger=FakeLogger(), collector=lambda: repeated)
+
+        assert result.step("persist").detail == "unchanged"
+        assert result.step("record_daily_challenge").detail == "inserted"
+        assert len(read_problems()) == 1
+
+        rows = execute_query(
+            "SELECT challenge_date, problem_id FROM daily_challenges ORDER BY challenge_date"
+        )
+        assert [str(row["challenge_date"]) for row in rows] == ["2026-10-21", "2026-10-22"]
+        assert [row["problem_id"] for row in rows] == ["3863", "3863"]
 
 
 class TestFailures:

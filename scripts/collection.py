@@ -44,11 +44,28 @@ def parse_challenge(payload) -> dict:
             "Failed to fetch challenge: 'activeDailyCodingChallengeQuestion' in unexpected format"
         )
 
-    question_info = raw_data.get("question")
+    return parse_question(raw_data.get("question"), raw_data)
+
+
+def parse_question(question_info, occurrence: dict) -> dict:
+    """Interpret a question plus the daily occurrence that points to it.
+
+    `occurrence` is the source object that carries `date` and `link` (the
+    `activeDailyCodingChallengeQuestion` object for today's query, or a record
+    from the monthly history query). Keeping this separate from the payload
+    layout lets the backfill reuse the exact same validation rules.
+    """
     if question_info is None:
         raise CollectionError("Failed to fetch challenge: response missing 'question' (layout changed?)")
     if not isinstance(question_info, dict):
         raise CollectionError("Failed to fetch challenge: 'question' in unexpected format")
+
+    if occurrence is None:
+        occurrence = {}
+    if not isinstance(occurrence, dict):
+        raise CollectionError(
+            "Failed to fetch challenge: 'activeDailyCodingChallengeQuestion' in unexpected format"
+        )
 
     warnings = []
 
@@ -59,7 +76,7 @@ def parse_challenge(payload) -> dict:
         raise CollectionError(
             "Challenge without ID (questionFrontendId missing). Skipping save. "
             f"Seen: title={question_info.get('title')!r} slug={question_info.get('titleSlug')!r} "
-            f"date={raw_data.get('date')!r} link={raw_data.get('link')!r}"
+            f"date={occurrence.get('date')!r} link={occurrence.get('link')!r}"
         )
 
     # Optional scalar fields: absent/null become warnings, the run continues.
@@ -70,16 +87,16 @@ def parse_challenge(payload) -> dict:
             warnings.append(f"Warning: field '{field}' was null — continued anyway")
 
     for field in ("date", "link"):
-        if field not in raw_data:
+        if field not in occurrence:
             warnings.append(f"Warning: field '{field}' missing in response — continued anyway")
-        elif raw_data.get(field) is None:
+        elif occurrence.get(field) is None:
             warnings.append(f"Warning: field '{field}' was null — continued anyway")
 
     python_snippet = _extract_python_snippet(question_info, warnings)
     topics = _extract_topics(question_info, warnings)
 
     # Link is derived; never fabricate it.
-    raw_link = raw_data.get("link")
+    raw_link = occurrence.get("link")
     if isinstance(raw_link, str) and raw_link.strip():
         full_link = f"https://leetcode.com{raw_link}"
     else:
@@ -89,7 +106,7 @@ def parse_challenge(payload) -> dict:
 
     return {
         "id": question_id,
-        "date": raw_data.get("date"),
+        "date": occurrence.get("date"),
         "title": question_info.get("title"),
         "slug": question_info.get("titleSlug"),
         "link": full_link,
