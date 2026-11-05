@@ -124,6 +124,20 @@ The sync runs against the solution repository (the same folder the files live in
 
 To mark a challenge as solved, add a line with `# Solved` at the end of the file. The template tells you where. Nothing else is needed: the next sync pushes the solution, records `solved_at` from the file's last modification time, and removes the file from your notebook — it stays in the repository.
 
+> **Do not delete the file yourself.** The solution and its modification time disappear together, and the sync has nothing left to push. Mark it and leave it there.
+
+#### Finding the challenge of the day
+
+A solved file leaves the working tree, so the open challenges end up scattered across the topic folders. The sync writes the answer to one file: `PENDING.md`, at the root of the solutions repository.
+
+```markdown
+| Collected | ID | Title | Difficulty | Topics | Waiting | File |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2026-11-06 | 1385 | Find the Distance Value… | Easy | Array, Sorting | 1 day | [array/1385_….py](array/1385_….py) |
+```
+
+It is regenerated at the end of every sync and published to the repository, so it is never stale. It also says when the challenge of the day is missing from the ledger — that means the cloud is late, not that there is nothing to do.
+
 #### Running it every day, automatically
 
 `scripts/sync_notebook.cmd` is the entry point of the scheduled task. It carries the project path and the `uv` path, so the Task Scheduler only needs to know one file. The output goes to `logs/sync-task.log` — no console window, and the history of the runs is always there.
@@ -132,10 +146,12 @@ Create the task in **Task Scheduler** (`taskschd.msc`) with **Create Task** (not
 
 | Tab | Setting |
 | --- | --- |
-| Triggers | New → *At log on of* your user → delay **30 seconds** (the network needs a moment) |
+| Triggers | New → *Daily*, start at **06:00** |
 | Actions | New → *Start a program* → `…\leetcode-analytics-automation\scripts\sync_notebook.cmd` → *Start in*: `…\leetcode-analytics-automation` |
 | Conditions | Uncheck *Start only if the computer is on AC power*; check *Start only if a network connection is available* |
-| Settings | Check *Allow the task to be run on demand*; *If the task fails, restart every* **1 minute**, *up to* **3 times** |
+| Settings | Check *Run the task as soon as possible after a scheduled start is missed*; check *If the task is already running, do not start a new instance*; check *Allow the task to be run on demand*; *If the task fails, restart every* **1 minute**, *up to* **3 times** |
+
+A daily trigger means **one run per day**, never before 06:00, no matter how many times you log in. If the computer was off at 06:00, the task runs the moment you turn it on. The cloud publishes the challenge at 22:15 BRT, so it is always there before the task wakes up.
 
 A failed run is almost always the network not being up yet: the restart rule covers it.
 
@@ -159,6 +175,7 @@ Backfill detects dates without a `daily_challenges` row, fetches the monthly his
 | --- | --- | --- |
 | `LEETCODE_DB_URL` | `postgresql://leetcode:leetcode_local_dev@localhost:5432/leetcode_analytics` | Operational database (Neon in production) |
 | `LEETCODE_TEST_DB_URL` | derived from `LEETCODE_DB_URL` | Separate database used by the tests |
+| `LEETCODE_ADMIN_DB_URL` | — | Database owner, used only to provision roles |
 | `LEETCODE_OUTPUT_DIR` | `<user>/Problem-Solving/LeetCode` | Where the solution files live |
 | `LEETCODE_DB_TIMEOUT` | `10` | Seconds to wait for the database |
 | `LEETCODE_BACKFILL_DAYS` | `60` | Lookback window when `--since` is omitted |
@@ -173,6 +190,34 @@ LEETCODE_TEST_DB_URL = Docker          ← the test suite
 ```
 
 The test database is created on the server named by `LEETCODE_TEST_DB_URL`, through the `postgres` maintenance database. This matters because the Neon free plan does not allow `CREATE DATABASE`: with the split above, `uv run pytest` still runs the whole suite locally. Docker only needs to be up when you are testing (`docker compose up -d`).
+
+### Database roles
+
+The pipeline does not run as the database owner. It uses `leetcode_app`, a role that owns the objects it manages — so it can apply the schema — but has no cluster-level powers:
+
+| | `neondb_owner` | `leetcode_app` |
+| --- | --- | --- |
+| Superuser | no | no |
+| Create databases | yes | **no** |
+| Create roles | yes | **no** |
+| Owns the schema objects | no (since the provisioning) | yes |
+
+```bash
+# see what it would do
+uv run python scripts/provision_app_role.py
+
+# do it (the admin connection comes from LEETCODE_ADMIN_DB_URL)
+uv run python scripts/provision_app_role.py --apply
+```
+
+The script writes the application connection string straight into `.env`. The generated password is never printed and never leaves the machine.
+
+Two connections, two purposes:
+
+```text
+LEETCODE_DB_URL      = leetcode_app   ← the pipeline, the sync, the GitHub secret
+LEETCODE_ADMIN_DB_URL = neondb_owner  ← only for provisioning a role
+```
 
 ### Database tasks
 

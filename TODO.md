@@ -17,6 +17,8 @@
 - [x] Run the connectivity probe from GitHub before enabling the schedule (2026-11-04, green)
 - [x] Notebook sync: the cloud collects, the notebook solves, the ledger tracks (2026-11-05)
 - [x] Resolution timing: `generated_at`, `collected_at`, `solved_at` + `v_resolution` view (2026-11-05)
+- [x] `PENDING.md`: the index of the open challenges at the root of the solutions repository (2026-11-05)
+- [x] The application role `leetcode_app`: the pipeline no longer runs as the database owner (2026-11-05)
 
 ## Dated reminders
 
@@ -38,6 +40,7 @@
 - [x] Postgres in Docker Compose with a persistent volume (§26)
 - [x] `generated_at` / `collected_at` / `solved_at` + the `v_resolution` view (§10.2)
 - [x] Reset the collected data to 2026-11-05 (`scripts/reset_collected_data.py`)
+- [x] The application role `leetcode_app` — the pipeline owns the objects it manages, not the database (§21.3)
 - [ ] `pg_dump` backup (scheduled) — the volume and Neon free plan are not a backup
 - [ ] Delete the legacy SQLite file once the migration is considered stable
 - [ ] A read-only role for the dashboard, separate from the writer role
@@ -64,4 +67,5 @@
 - [ ] Scheduled database backup
 - [ ] A dashboard over `v_resolution`: filters by date, difficulty and topic, plus the statistics of the solved exercises
 - [ ] Consider per-run retry budget for transient LeetCode failures
-- [ ] **Create the Windows Task Scheduler entry** (manual, one time): trigger *At log on* with a 30s delay, action `scripts\sync_notebook.cmd`, no AC-power condition, restart every 1 minute up to 3 times. The README has the full table.
+- [ ] **Create the Windows Task Scheduler entry** (manual, one time): trigger *Daily* at **06:00**, action `scripts\sync_notebook.cmd`, no AC-power condition, "run as soon as possible after a missed start", "do not start a new instance", restart every 1 minute up to 3 times. The README has the full table.
+- [ ] Update the GitHub Actions secret `LEETCODE_DB_URL` to the `leetcode_app` connection string (the pipeline now uses the application role, not the owner)

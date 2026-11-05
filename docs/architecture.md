@@ -771,6 +771,24 @@ ensure_schema() → apply_schema() → db/schema.sql
 
 `db/schema.sql` is idempotent: `CREATE TABLE IF NOT EXISTS`, `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` and `CREATE OR REPLACE VIEW`. The cloud, the notebook sync and the reset script all call it, so none of them depends on the others having run first.
 
+## 21.3 The pipeline does not run as the database owner
+
+The operational database has two roles:
+
+| | `neondb_owner` | `leetcode_app` |
+| --- | --- | --- |
+| Used by | the provisioning script only | the pipeline, the sync, the GitHub secret |
+| Superuser | no | no |
+| Create databases | yes | no |
+| Create roles | yes | no |
+| Owns the schema objects | no | yes |
+
+`leetcode_app` owns the objects it manages, because `ensure_schema()` needs ownership and not only privileges: `ALTER TABLE ... ADD COLUMN` and `CREATE OR REPLACE VIEW` both require it. What it does not have is any cluster-level power: it cannot create a database, a role or an extension, and it cannot read the credentials of any other role.
+
+The ownership of a table carries the ownership of the sequences generated for its serial columns. A sequence that belongs to a column cannot change its owner on its own — Postgres refuses it — so the table is transferred and the sequence follows.
+
+The application connection string lives in `LEETCODE_DB_URL`; the owner connection lives in `LEETCODE_ADMIN_DB_URL` and is read by one script only. `scripts/provision_app_role.py` creates the role and writes the new connection string straight into `.env`: the generated password is never printed and never leaves the machine.
+
 ---
 
 # 22. Important distinction: category vs topic
@@ -952,6 +970,27 @@ The three roles are clear:
 The sync is the only component that writes to the repository from the notebook, and it is safe to run at any time: it pulls, pushes what carries the marker, updates the ledger and rebuilds a challenge the ledger knows but the notebook lost.
 
 A solved file leaves the notebook but stays in the repository. The git index marks it with `skip-worktree`, so the local deletion is invisible to git: the working tree stays clean, the next pull does not bring the file back, and the solution is never overwritten by a regeneration.
+
+## 25.3 The index of the open challenges
+
+A solved file leaving the notebook has a cost: the open challenges end up scattered across the topic folders, and finding the one of the day means opening files until one of them says it was collected today. With more than one open, it becomes a hunt.
+
+The answer is `PENDING.md`, one file at the root of the solutions repository:
+
+```markdown
+| Collected | ID | Title | Difficulty | Topics | Waiting | File |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2026-11-06 | 1385 | Find the Distance Value… | Easy | Array, Sorting | 1 day | [array/1385_….py](array/1385_….py) |
+```
+
+The rules:
+
+* the **ledger is the source of truth** — the index is a projection of it, never a second source;
+* it is **regenerated at the end of every sync**, after the solutions are pushed and after the missing files are rebuilt, so it describes the state the notebook is really in;
+* it is **published to the repository**, so the GitHub page shows what is open too;
+* it says when the challenge of the day is **absent from the ledger**: the cloud is late, and that is worth reporting instead of showing an empty list as if there was nothing to do.
+
+The index lives in the solutions repository, but the code that writes it lives in the automation project. The separation is deliberate: the solutions repository holds content and no code, so the database credentials stay in one place.
 
 ---
 
