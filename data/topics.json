@@ -118,5 +118,25 @@
   {
     "id": 30,
     "name": "Fermat's Little Theorem"
+  },
+  {
+    "id": 31,
+    "name": "Prefix Sum"
+  },
+  {
+    "id": 32,
+    "name": "Recursion"
+  },
+  {
+    "id": 33,
+    "name": "Geometry"
+  },
+  {
+    "id": 34,
+    "name": "Two Pointers"
+  },
+  {
+    "id": 35,
+    "name": "Simulation"
   }
 ]
