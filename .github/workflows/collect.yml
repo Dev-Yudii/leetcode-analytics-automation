@@ -2,8 +2,8 @@ name: Daily challenge collection
 
 on:
   schedule:
-    # 03:00 UTC = 00:00 BRT (UTC-3): the Daily Challenge changes at 00:00 UTC.
-    - cron: "0 3 * * *"
+    # 03:20 UTC = 00:20 BRT (UTC-3): schedule testing.
+    - cron: "20 3 * * *"
   workflow_dispatch:
     inputs:
       backfill:
