@@ -7,6 +7,12 @@ from scripts.generator import (
     generate_daily_file,
     relative_file_path,
 )
+from scripts.solution_file import (
+    NOTES_PLACEHOLDER,
+    SOLVED_INSTRUCTION,
+    SOLVED_MARKER,
+    is_solved,
+)
 
 
 class TestCleanHtml:
@@ -45,10 +51,17 @@ class TestExtractInputs:
 
 
 class TestFilePath:
-    def test_first_topic_decides_the_folder(self, sample_challenge):
+    def test_the_topic_decides_the_folder(self, sample_challenge):
         assert relative_file_path(sample_challenge) == (
             "string/3863_minimum-operations-to-sort-a-string.py"
         )
+
+    def test_the_topic_order_does_not_change_the_folder(self, sample_challenge):
+        sample_challenge["topics"] = ["String", "Array", "Hash Table"]
+        first = relative_file_path(sample_challenge)
+        sample_challenge["topics"] = ["Hash Table", "Array", "String"]
+        assert relative_file_path(sample_challenge) == first
+        assert first.startswith("array/")
 
     def test_without_topics_the_folder_is_general(self, sample_challenge):
         sample_challenge["topics"] = []
@@ -107,3 +120,22 @@ class TestGenerateFile:
         content = (temp_output_dir / "string" / "3863_minimum-operations-to-sort-a-string.py").read_text(encoding="utf-8")
         assert "not auto-translated" in content
         assert "exec(" not in content
+
+    def test_writes_the_notes_guidance(self, sample_challenge, temp_output_dir):
+        generate_daily_file(sample_challenge)
+        content = (temp_output_dir / "string" / "3863_minimum-operations-to-sort-a-string.py").read_text(encoding="utf-8")
+        assert NOTES_PLACEHOLDER in content
+
+    def test_writes_the_solved_instruction_at_the_end(self, sample_challenge, temp_output_dir):
+        generate_daily_file(sample_challenge)
+        content = (temp_output_dir / "string" / "3863_minimum-operations-to-sort-a-string.py").read_text(encoding="utf-8")
+        assert SOLVED_INSTRUCTION in content
+        assert content.strip().endswith(SOLVED_INSTRUCTION)
+
+    def test_a_fresh_template_is_not_solved(self, sample_challenge, temp_output_dir):
+        path = generate_daily_file(sample_challenge)
+        assert not is_solved(path)
+
+    def test_the_solved_instruction_is_not_a_marker(self, sample_challenge, temp_output_dir):
+        path = generate_daily_file(sample_challenge)
+        assert not SOLVED_MARKER.search(SOLVED_INSTRUCTION)

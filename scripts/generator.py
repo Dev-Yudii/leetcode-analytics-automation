@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 
 from scripts.paths import get_output_path
+from scripts.solution_file import NOTES_PLACEHOLDER, SOLVED_INSTRUCTION
 from scripts.topics import folder_name_for_topic
 from scripts.translator import parse_input, parse_output
 
@@ -92,11 +93,17 @@ def parse_function_call(code_snippet):
 def relative_file_path(challenge_data) -> str:
     """Relative path of the solution file, as stored in the database.
 
-    The first topic decides the folder. It is a filesystem organization
-    rule only, not a classification of the problem.
+    The folder comes from the alphabetically first topic, so the path does
+    not depend on the order LeetCode happens to return the topics in. The
+    first topic is a filesystem organization rule only, not a
+    classification of the problem.
     """
     topics = challenge_data.get("topics") or []
-    folder = folder_name_for_topic(topics[0]) if topics else GENERAL_FOLDER
+    folder = (
+        folder_name_for_topic(sorted(topics, key=lambda t: t.casefold())[0])
+        if topics
+        else GENERAL_FOLDER
+    )
     problem_id = challenge_data.get("id")
     slug = challenge_data.get("slug") or f"problem-{problem_id}"
     filename = ILLEGAL_PATH_CHARS.sub("_", f"{problem_id}_{slug}.py")
@@ -206,8 +213,9 @@ if __name__ == "__main__":
 {"\n".join(test_lines)}
 """
 Notes:
-    -
+{NOTES_PLACEHOLDER}
 """
+{SOLVED_INSTRUCTION}
 '''
 
     with open(str(filepath), "w", encoding="utf-8") as f:
