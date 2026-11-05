@@ -33,6 +33,7 @@ from scripts.leetcode_client import get_challenge_for_date
 from scripts.paths import get_output_path
 from scripts.persistence import (
     PersistenceError,
+    ensure_schema,
     get_open_problems,
     get_problem,
     mark_solved,
@@ -299,6 +300,18 @@ def run_sync(logger=None, repo=None, root=None, dry_run: bool = False) -> SyncRe
         result.status = FAILED
         result.exit_code = EXIT_FATAL
         result.warnings.append(f"{repo} is not a git repository — nothing to sync")
+        return result
+
+    # The sync must not depend on the cloud having run first: it applies
+    # the schema itself, so a missing column is never the reason a
+    # resolution fails to be recorded.
+    try:
+        ensure_schema()
+    except PersistenceError as e:
+        result.status = FAILED
+        result.exit_code = EXIT_FATAL
+        result.warnings.append(f"could not prepare the ledger: {e}")
+        logger.error(f"Could not prepare the ledger: {e}")
         return result
 
     try:

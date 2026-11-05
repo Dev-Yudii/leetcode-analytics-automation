@@ -12,6 +12,7 @@ are skipped instead of failing.
 import os
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -20,6 +21,19 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 TEST_DB_NAME = "leetcode_analytics_test"
+
+
+def _database_name(url: str) -> str:
+    """The database a connection string points at."""
+    return urlsplit(url).path.lstrip("/")
+
+
+def _url_with_database(url: str, database: str) -> str:
+    """The same connection string, pointing at another database."""
+    parts = urlsplit(url)
+    query = f"?{parts.query}" if parts.query else ""
+    return f"{parts.scheme}://{parts.netloc}/{database}{query}"
+
 
 SAMPLE_CONTENT = """
 <p>You are given a string <code>s</code> consisting of lowercase English letters.</p>
@@ -72,23 +86,33 @@ def temp_db_path(tmp_path, monkeypatch):
 def postgres_url(monkeypatch):
     """Point the tests at a separate PostgreSQL database, empty.
 
-    The test database is created when it does not exist yet. The tests are
-    skipped when PostgreSQL is not reachable.
+    The test database is created on the server of `LEETCODE_TEST_DB_URL`,
+    not on the server of the operational database. The pipeline can talk
+    to Neon while the tests use the local Docker container, and a
+    provider that forbids `CREATE DATABASE` never blocks the test suite.
+
+    The tests are skipped when the test server is not reachable.
     """
     import psycopg
 
-    from scripts.db_utils import DEFAULT_DB_URL, get_db_url
+    from scripts.db_utils import get_db_url
 
     base_url = get_db_url()
-    test_url = os.environ.get("LEETCODE_TEST_DB_URL") or base_url.rsplit("/", 1)[0] + "/" + TEST_DB_NAME
+    test_url = os.environ.get("LEETCODE_TEST_DB_URL") or _url_with_database(
+        base_url, TEST_DB_NAME
+    )
+    test_db_name = _database_name(test_url)
+    # The maintenance database always exists, and it is the one that is
+    # allowed to create another database.
+    admin_url = _url_with_database(test_url, "postgres")
 
     try:
-        with psycopg.connect(base_url, autocommit=True, connect_timeout=5) as conn:
+        with psycopg.connect(admin_url, autocommit=True, connect_timeout=5) as conn:
             exists = conn.execute(
-                "SELECT 1 FROM pg_database WHERE datname = %s", (TEST_DB_NAME,)
+                "SELECT 1 FROM pg_database WHERE datname = %s", (test_db_name,)
             ).fetchone()
             if not exists:
-                conn.execute(f'CREATE DATABASE "{TEST_DB_NAME}"')
+                conn.execute(f'CREATE DATABASE "{test_db_name}"')
     except psycopg.Error as e:
         pytest.skip(f"PostgreSQL is not reachable: {e}")
 

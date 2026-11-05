@@ -21,6 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.db_utils import get_connection
+from scripts.persistence import ensure_schema
 
 
 class ResetError(Exception):
@@ -36,6 +37,8 @@ def _parse_date(value: str) -> date:
 
 def preview(keep_date: date) -> dict:
     """Count what the reset would remove."""
+    ensure_schema()
+
     with get_connection() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
@@ -69,6 +72,8 @@ def preview(keep_date: date) -> dict:
 
 def reset(keep_date: date, dry_run: bool = False) -> dict:
     """Remove every collected day except the given one."""
+    ensure_schema()
+
     if dry_run:
         return preview(keep_date)
 
@@ -81,6 +86,20 @@ def reset(keep_date: date, dry_run: bool = False) -> dict:
                 " WHERE challenge_date = %s",
                 (keep_date,),
             )
+
+            # A problem collected before the `generated_at` column existed
+            # has it empty. The collection run knows when the challenge was
+            # extracted, so the timestamp is recovered from there before
+            # the runs are pruned.
+            cursor.execute(
+                "UPDATE problems p"
+                " SET generated_at = COALESCE(p.generated_at, r.started_at)"
+                " FROM collection_runs r"
+                " WHERE r.problem_id = p.id"
+                "   AND p.id IN (SELECT id FROM _keep)"
+                "   AND p.generated_at IS NULL"
+            )
+            removed["generated_at_backfilled"] = cursor.rowcount
 
             cursor.execute(
                 "DELETE FROM collection_events WHERE run_id NOT IN"
@@ -157,6 +176,9 @@ def main(argv=None) -> int:
         f" removed {report['problems_to_delete']} problem(s) and"
         f" {report['occurrences_to_delete']} occurrence(s)."
     )
+    backfilled = report.get("removed", {}).get("generated_at_backfilled", 0)
+    if backfilled:
+        print(f"Recovered the generation time of {backfilled} problem(s).")
     return 0
 
 
