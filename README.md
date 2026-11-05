@@ -148,7 +148,7 @@ Backfill detects dates without a `daily_challenges` row, fetches the monthly his
 | `LEETCODE_DB_TIMEOUT` | `10` | Seconds to wait for the database |
 | `LEETCODE_BACKFILL_DAYS` | `60` | Lookback window when `--since` is omitted |
 
-On the notebook, the connection string lives in a local `.env` file (copy `.env.example`). It is gitignored, and a real environment variable always wins over it — so the GitHub Actions secret is never overridden by an accidental local file.
+On the notebook, the connection string lives in a local `.env` file (copy `.env.example`). It is gitignored, and a real environment variable always wins over it — so the GitHub Actions secret is never overridden by an accidental local file. While the Neon line in the `.env` is commented, the local Docker database is used.
 
 ### Database tasks
 
