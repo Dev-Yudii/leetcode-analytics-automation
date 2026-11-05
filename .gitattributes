@@ -1,0 +1,2 @@
+# Batch files need CRLF: cmd.exe is not reliable with bare LF.
+*.cmd text eol=crlf
