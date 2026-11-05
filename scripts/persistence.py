@@ -315,18 +315,25 @@ def get_problem(problem_id: str) -> dict | None:
 def get_open_problems() -> list[dict]:
     """Problems that are not solved yet, with the path of their file.
 
-    The sync uses this to know which challenges the notebook should hold.
+    The sync uses this to know which challenges the notebook should hold,
+    and the index of the open challenges reads the same rows. The topics
+    come along in one aggregate, so the index needs a single query.
     """
     ensure_schema()
     try:
         with get_connection() as conn:
             with conn.cursor(row_factory=dict_row) as cursor:
                 cursor.execute(
-                    "SELECT id, title, slug, challenge_date, file_path, status,"
-                    " generated_at, collected_at, solved_at"
-                    " FROM problems"
-                    " WHERE status <> 'CONCLUDED'"
-                    " ORDER BY challenge_date, id"
+                    "SELECT p.id, p.title, p.slug, p.difficulty, p.challenge_date,"
+                    " p.file_path, p.status,"
+                    " p.generated_at, p.collected_at, p.solved_at,"
+                    " COALESCE(string_agg(t.name, ', ' ORDER BY t.name), '') AS topics"
+                    " FROM problems p"
+                    " LEFT JOIN problem_topics pt ON pt.problem_id = p.id"
+                    " LEFT JOIN topics t ON t.id = pt.topic_id"
+                    " WHERE p.status <> 'CONCLUDED'"
+                    " GROUP BY p.id"
+                    " ORDER BY p.challenge_date, p.id"
                 )
                 return cursor.fetchall()
     except Exception as e:

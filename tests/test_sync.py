@@ -14,6 +14,20 @@ pytestmark = pytest.mark.usefixtures("postgres_url")
 SOLVED_FILE = "string/3863_minimum-operations-to-sort-a-string.py"
 
 
+@pytest.fixture(autouse=True)
+def no_network(monkeypatch, sample_challenge):
+    """The sync must not reach the internet during the tests.
+
+    It checks the challenge of the day to know whether the cloud is
+    late. Here that answer is fixed.
+    """
+    import scripts.sync as sync_module
+
+    monkeypatch.setattr(
+        sync_module, "get_daily_challenge", lambda: dict(sample_challenge)
+    )
+
+
 class FakeLogger:
     def __init__(self):
         self.messages = []
@@ -205,3 +219,141 @@ class TestSync:
 
         assert result.status == "failed"
         assert result.exit_code == 1
+
+
+class TestPendingIndex:
+    """The index of the open challenges, at the root of the repository."""
+
+    def test_the_index_lists_the_open_challenge(
+        self, tmp_path, monkeypatch, sample_challenge, temp_catalog
+    ):
+        remote = make_remote(tmp_path)
+        repo = make_repo(tmp_path, remote)
+        monkeypatch.setenv("LEETCODE_OUTPUT_DIR", str(repo))
+        seed_problem(sample_challenge)
+
+        run_sync(logger=FakeLogger(), repo=repo)
+
+        index = (repo / "PENDING.md").read_text(encoding="utf-8")
+        assert "# Open challenges" in index
+        assert "3863" in index
+        assert "Minimum Operations to Sort a String" in index
+        assert SOLVED_FILE in index
+
+    def test_the_index_is_published(
+        self, tmp_path, monkeypatch, sample_challenge, temp_catalog
+    ):
+        remote = make_remote(tmp_path)
+        repo = make_repo(tmp_path, remote)
+        monkeypatch.setenv("LEETCODE_OUTPUT_DIR", str(repo))
+        seed_problem(sample_challenge)
+
+        run_sync(logger=FakeLogger(), repo=repo)
+
+        remote_files = subprocess.run(
+            ["git", "-C", str(remote), "ls-tree", "-r", "--name-only", "main"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=True,
+        ).stdout
+        assert "PENDING.md" in remote_files
+
+    def test_a_solved_challenge_leaves_the_index(
+        self, tmp_path, monkeypatch, sample_challenge, temp_catalog
+    ):
+        remote = make_remote(tmp_path)
+        repo = make_repo(tmp_path, remote)
+        monkeypatch.setenv("LEETCODE_OUTPUT_DIR", str(repo))
+        seed_problem(sample_challenge)
+
+        target = repo / SOLVED_FILE
+        target.write_text(
+            target.read_text(encoding="utf-8") + "# Solved\n", encoding="utf-8"
+        )
+
+        run_sync(logger=FakeLogger(), repo=repo)
+
+        index = (repo / "PENDING.md").read_text(encoding="utf-8")
+        assert "Nothing open right now." in index
+        assert "3863" not in index
+
+    def test_the_index_is_not_committed_again_when_nothing_changed(
+        self, tmp_path, monkeypatch, sample_challenge, temp_catalog
+    ):
+        remote = make_remote(tmp_path)
+        repo = make_repo(tmp_path, remote)
+        monkeypatch.setenv("LEETCODE_OUTPUT_DIR", str(repo))
+        seed_problem(sample_challenge)
+
+        run_sync(logger=FakeLogger(), repo=repo)
+        before = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=True,
+        ).stdout.strip()
+
+        run_sync(logger=FakeLogger(), repo=repo)
+        after = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=True,
+        ).stdout.strip()
+
+        assert before == after
+
+    def test_the_index_reports_a_challenge_the_cloud_has_not_collected(
+        self, tmp_path, monkeypatch, temp_catalog
+    ):
+        remote = make_remote(tmp_path)
+        repo = make_repo(tmp_path, remote)
+        monkeypatch.setenv("LEETCODE_OUTPUT_DIR", str(repo))
+
+        import scripts.sync as sync_module
+
+        monkeypatch.setattr(
+            sync_module,
+            "get_daily_challenge",
+            lambda: {"id": "4242", "title": "Tomorrow's problem", "date": "2026-10-21"},
+        )
+
+        result = run_sync(logger=FakeLogger(), repo=repo)
+
+        index = (repo / "PENDING.md").read_text(encoding="utf-8")
+        assert "not collected yet" in index
+        assert "4242" in index
+        assert any("4242" in warning for warning in result.warnings)
+
+    def test_a_challenge_without_a_file_is_marked_as_not_collected(
+        self, tmp_path, monkeypatch, sample_challenge, temp_catalog
+    ):
+        remote = make_remote(tmp_path)
+        repo = make_repo(tmp_path, remote)
+        monkeypatch.setenv("LEETCODE_OUTPUT_DIR", str(repo))
+        seed_problem(sample_challenge)
+
+        # the ledger knows the challenge, the notebook does not have it
+        (repo / SOLVED_FILE).unlink()
+
+        import scripts.sync as sync_module
+
+        monkeypatch.setattr(
+            sync_module, "get_challenge_for_date", lambda day: sample_challenge
+        )
+        monkeypatch.setattr(
+            sync_module,
+            "get_daily_challenge",
+            lambda: {"id": "9999", "title": "Another problem"},
+        )
+
+        run_sync(logger=FakeLogger(), repo=repo)
+
+        index = (repo / "PENDING.md").read_text(encoding="utf-8")
+        assert "9999" in index

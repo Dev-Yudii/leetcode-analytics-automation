@@ -29,8 +29,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.generator import generate_daily_file
-from scripts.leetcode_client import get_challenge_for_date
+from scripts.leetcode_client import get_challenge_for_date, get_daily_challenge
 from scripts.paths import get_output_path
+from scripts.pending_index import PENDING_FILE, render_pending_index, write_pending_index
 from scripts.persistence import (
     PersistenceError,
     ensure_schema,
@@ -285,6 +286,91 @@ def _rebuild_missing(repo: Path, root: Path, result: SyncResult, logger, dry_run
 # --------------------------------------------------------------------------
 
 
+def _missing_today(result: SyncResult, logger) -> str | None:
+    """The challenge that is live on LeetCode but absent from the ledger.
+
+    The cloud is the one that collects. When the challenge of the day is
+    not in the ledger, the cloud is late — and the index says so instead
+    of showing an empty list as if there was nothing to do.
+
+    A LeetCode outage is not the same thing: the check is skipped and
+    nothing is reported.
+    """
+    try:
+        data = get_daily_challenge()
+    except Exception as e:
+        logger.warning(f"could not check the challenge of today: {e}")
+        return None
+
+    problem_id = data.get("id")
+    if not problem_id:
+        return None
+
+    try:
+        row = get_problem(problem_id)
+    except PersistenceError:
+        return None
+
+    if row is not None:
+        return None
+
+    label = f"#{problem_id}"
+    title = (data.get("title") or "").strip()
+    if title:
+        label += f" — {title}"
+    return label
+
+
+def _update_pending_index(repo: Path, result: SyncResult, logger, dry_run: bool) -> None:
+    """Regenerate the index of the open challenges and publish it.
+
+    It runs after the solutions are pushed and after the missing files
+    are rebuilt, so the index describes the state the notebook is really
+    in.
+    """
+    try:
+        rows = get_open_problems()
+    except PersistenceError as e:
+        result.warnings.append(f"could not read the ledger for the index: {e}")
+        return
+
+    missing = _missing_today(result, logger)
+    if missing:
+        result.warnings.append(
+            f"the challenge of today is not collected yet ({missing})"
+        )
+
+    content = render_pending_index(rows, root=repo, missing_today=missing)
+
+    if dry_run:
+        logger.info(
+            f"[dry-run] would update {PENDING_FILE} ({len(rows)} open challenge(s))"
+        )
+        return
+
+    try:
+        changed = write_pending_index(repo, content)
+    except OSError as e:
+        result.warnings.append(f"could not write {PENDING_FILE}: {e}")
+        logger.error(f"Could not write {PENDING_FILE}: {e}")
+        return
+
+    if changed:
+        logger.info(f"Updated {PENDING_FILE} — {len(rows)} open challenge(s)")
+    else:
+        logger.info(f"{PENDING_FILE} is up to date ({len(rows)} open challenge(s))")
+
+    # The commit is attempted even when the content did not change: the
+    # file may be waiting for a push that failed in an earlier run.
+    try:
+        commit_and_push(
+            repo, [PENDING_FILE], "chore: update the open challenges index"
+        )
+    except SyncError as e:
+        result.warnings.append(f"could not push {PENDING_FILE}: {e}")
+        logger.error(f"Could not push {PENDING_FILE}: {e}")
+
+
 def run_sync(logger=None, repo=None, root=None, dry_run: bool = False) -> SyncResult:
     """Run the whole sync. Never raises: the result says what happened."""
     if logger is None:
@@ -325,6 +411,7 @@ def run_sync(logger=None, repo=None, root=None, dry_run: bool = False) -> SyncRe
 
     _push_solved_files(repo, root, result, logger, dry_run)
     _rebuild_missing(repo, root, result, logger, dry_run)
+    _update_pending_index(repo, result, logger, dry_run)
 
     result.status = DEGRADED if result.warnings else OK
     result.exit_code = EXIT_DEGRADED if result.warnings else EXIT_OK
