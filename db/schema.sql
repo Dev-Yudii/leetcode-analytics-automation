@@ -20,10 +20,38 @@ CREATE TABLE IF NOT EXISTS problems (
     status         TEXT NOT NULL DEFAULT 'PENDING',
     in_progress_at TIMESTAMPTZ,
     concluded_at   TIMESTAMPTZ,
+    generated_at   TIMESTAMPTZ,
+    collected_at   TIMESTAMPTZ,
+    solved_at      TIMESTAMPTZ,
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT problems_status_check CHECK (status IN ('PENDING', 'IN_PROGRESS', 'CONCLUDED'))
 );
+
+-- CREATE TABLE IF NOT EXISTS does not touch a table that already exists,
+-- so the columns added after the first release need their own statement.
+ALTER TABLE problems ADD COLUMN IF NOT EXISTS generated_at TIMESTAMPTZ;
+ALTER TABLE problems ADD COLUMN IF NOT EXISTS collected_at TIMESTAMPTZ;
+ALTER TABLE problems ADD COLUMN IF NOT EXISTS solved_at TIMESTAMPTZ;
+
+-- How long a challenge waited for the user: the resolution time starts
+-- when the file reached the notebook and ends when it was marked solved.
+CREATE OR REPLACE VIEW v_resolution AS
+SELECT
+    p.id,
+    p.title,
+    p.difficulty,
+    p.challenge_date,
+    p.file_path,
+    p.status,
+    p.generated_at,
+    p.collected_at,
+    p.solved_at,
+    EXTRACT(EPOCH FROM (p.solved_at - p.collected_at)) / 3600.0 AS resolution_hours,
+    EXTRACT(EPOCH FROM (p.solved_at - p.collected_at)) / 86400.0 AS resolution_days,
+    EXTRACT(EPOCH FROM (p.collected_at - p.generated_at)) / 3600.0 AS cloud_latency_hours
+FROM problems p
+WHERE p.solved_at IS NOT NULL AND p.collected_at IS NOT NULL;
 
 -- Which problem was the Daily Challenge on each date. A problem can be
 -- reused as a Daily Challenge on another day (§20), so this occurrence

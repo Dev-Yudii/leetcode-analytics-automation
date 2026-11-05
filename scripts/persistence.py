@@ -6,9 +6,10 @@ and this module is called before the file is generated, so a problem is
 never lost because a file already exists.
 """
 
-from datetime import date
+from datetime import date, datetime, timezone
 
 import psycopg
+from psycopg.rows import dict_row
 
 from scripts.db_utils import apply_schema, get_connection
 
@@ -98,8 +99,8 @@ def upsert_problem(data: dict, file_path: str, status: str | None = None) -> str
                 if existing is None:
                     cursor.execute(
                         "INSERT INTO problems"
-                        " (id, title, slug, link, difficulty, challenge_date, file_path, status)"
-                        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                        " (id, title, slug, link, difficulty, challenge_date, file_path, status, generated_at)"
+                        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, now())",
                         (
                             values["id"],
                             values["title"],
@@ -128,6 +129,69 @@ def upsert_problem(data: dict, file_path: str, status: str | None = None) -> str
                     tuple(updates.values()) + (problem_id,),
                 )
                 return ENRICHED
+    except Exception as e:
+        raise _translate(e) from e
+
+
+def set_collected_at(problem_id: str) -> str:
+    """Record that the challenge reached the user's notebook.
+
+    The first time the file is seen locally is the moment the challenge was
+    collected. The timestamp is written once and never overwritten, so the
+    resolution time always starts at the first collection.
+    """
+    if not problem_id:
+        raise PersistenceError("the problem has no identity (questionFrontendId missing)")
+
+    ensure_schema()
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE problems"
+                    " SET collected_at = COALESCE(collected_at, now()),"
+                    "     in_progress_at = COALESCE(in_progress_at, now()),"
+                    "     status = CASE WHEN status = 'PENDING'"
+                    "                   THEN 'IN_PROGRESS' ELSE status END,"
+                    "     updated_at = now()"
+                    " WHERE id = %s",
+                    (problem_id,),
+                )
+                if cursor.rowcount == 0:
+                    return SKIPPED
+                return "collected"
+    except Exception as e:
+        raise _translate(e) from e
+
+
+def mark_solved(problem_id: str, solved_at=None) -> str:
+    """Close a challenge: the user marked the file as solved.
+
+    `solved_at` is when the file was last edited, not when this function
+    runs: the sync may happen hours after the resolution.
+    """
+    if not problem_id:
+        raise PersistenceError("the problem has no identity (questionFrontendId missing)")
+
+    moment = solved_at or datetime.now(timezone.utc)
+    ensure_schema()
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE problems"
+                    " SET status = 'CONCLUDED',"
+                    "     solved_at = COALESCE(solved_at, %s),"
+                    "     collected_at = LEAST(COALESCE(collected_at, %s), %s),"
+                    "     in_progress_at = COALESCE(in_progress_at, %s),"
+                    "     concluded_at = COALESCE(concluded_at, now()),"
+                    "     updated_at = now()"
+                    " WHERE id = %s",
+                    (moment, moment, moment, moment, problem_id),
+                )
+                if cursor.rowcount == 0:
+                    return SKIPPED
+                return "concluded"
     except Exception as e:
         raise _translate(e) from e
 
@@ -225,6 +289,46 @@ def get_recorded_date_bounds() -> tuple[date | None, date | None]:
                 if row is None:
                     return None, None
                 return row[0], row[1]
+    except Exception as e:
+        raise _translate(e) from e
+
+
+def get_problem(problem_id: str) -> dict | None:
+    """Read one problem, or None when the ledger does not know it."""
+    if not problem_id:
+        return None
+    ensure_schema()
+    try:
+        with get_connection() as conn:
+            with conn.cursor(row_factory=dict_row) as cursor:
+                cursor.execute(
+                    "SELECT id, title, slug, link, difficulty, challenge_date, file_path,"
+                    " status, generated_at, collected_at, solved_at"
+                    " FROM problems WHERE id = %s",
+                    (problem_id,),
+                )
+                return cursor.fetchone()
+    except Exception as e:
+        raise _translate(e) from e
+
+
+def get_open_problems() -> list[dict]:
+    """Problems that are not solved yet, with the path of their file.
+
+    The sync uses this to know which challenges the notebook should hold.
+    """
+    ensure_schema()
+    try:
+        with get_connection() as conn:
+            with conn.cursor(row_factory=dict_row) as cursor:
+                cursor.execute(
+                    "SELECT id, title, slug, challenge_date, file_path, status,"
+                    " generated_at, collected_at, solved_at"
+                    " FROM problems"
+                    " WHERE status <> 'CONCLUDED'"
+                    " ORDER BY challenge_date, id"
+                )
+                return cursor.fetchall()
     except Exception as e:
         raise _translate(e) from e
 
