@@ -64,7 +64,7 @@ PostgreSQL
 Filesystem / Git
     personal solution files
     ↓
-Airflow (future)
+GitHub Actions (schedule) + sync.py (notebook)
     orchestration
     observability
 ```
@@ -75,7 +75,7 @@ PostgreSQL is responsible for persistence and structural integrity.
 
 Filesystem operations are handled by Python.
 
-Airflow will eventually orchestrate the pipeline, but it should not become responsible for deciding the meaning or validity of the data.
+GitHub Actions and the local sync orchestrate the pipeline, but they do not become responsible for deciding the meaning or validity of the data.
 
 ---
 
@@ -295,7 +295,7 @@ The path must therefore be determined before the problem is persisted.
 
 # 9. Filesystem organization
 
-Solution files are currently organized using the first topic returned by LeetCode.
+Solution files are organized by topic, using the alphabetically first topic returned by LeetCode.
 
 Example:
 
@@ -307,7 +307,7 @@ LeetCode/
 
 This is a filesystem organization rule only.
 
-The first topic must not be interpreted as:
+The topic that decides the folder must not be interpreted as:
 
 * the official primary topic;
 * the most important topic;
@@ -315,7 +315,7 @@ The first topic must not be interpreted as:
 
 All topics returned by LeetCode must be preserved independently in the relational model.
 
-The topic ordering returned by the source should not be assumed to represent semantic priority unless this is explicitly verified later.
+The topic ordering returned by the source is not assumed to represent semantic priority. The folder is chosen from the sorted topic list, so the path of a problem never depends on the order the source happened to use, and a re-run never creates a second file for the same problem.
 
 ---
 
@@ -353,6 +353,11 @@ CHECK (
 )
 ```
 
+The transition is driven by the notebook sync, not by a manual command:
+
+* `PENDING` → `IN_PROGRESS` when the file reaches the notebook;
+* `IN_PROGRESS` → `CONCLUDED` when the file carries the solved marker.
+
 ---
 
 ## 10.1 Status timestamps
@@ -377,6 +382,37 @@ It does not represent:
 * pipeline status;
 * database synchronization status;
 * file generation status.
+
+---
+
+## 10.2 Lifecycle timestamps
+
+Three timestamps describe the journey of a challenge from the source to the notebook:
+
+`generated_at`:
+
+* when the cloud extracted the challenge from LeetCode and generated the template;
+* written when the problem is first persisted, and never overwritten.
+
+`collected_at`:
+
+* when the template reached the user's notebook for the first time;
+* written by the sync on the first sighting of the file, and never overwritten.
+
+`solved_at`:
+
+* when the user marked the file as solved;
+* taken from the file's last modification time, not from the moment the sync ran: the sync may happen hours after the resolution.
+
+The resolution time is the interval between the collection and the resolution:
+
+```text
+resolution = solved_at - collected_at
+```
+
+It is exposed by the view `v_resolution`, together with `resolution_hours`, `resolution_days` and `cloud_latency_hours` (the time between the generation and the collection).
+
+A challenge that waits several days on the notebook is a challenge the user did not reach. The metric measures consistency, not difficulty.
 
 ---
 
@@ -791,6 +827,28 @@ The file should contain useful information such as:
 
 The original LeetCode page remains the authoritative source for the complete problem statement.
 
+## 24.1 The solved marker
+
+The template is replaced by the resolution, in the same file: there is no second file for the solution. The repository history keeps both versions, and the diff between them is the record of the work.
+
+The file ends with two things:
+
+```text
+Notes:
+    - Type your approach, insights and learnings here.
+# Add a line reading "# Solved" below when you finish the solution.
+```
+
+The user marks the challenge as finished by adding one line:
+
+```text
+# Solved
+```
+
+The marker is read with a line-anchored pattern that accepts `# Solved`, `#solved` and `# --solved`, in any case, and does not match the instruction line. The detection is based on the content of the file, never on the size of the diff: a file full of solution code and no marker is still an open challenge.
+
+The marker is the only thing that closes a challenge. The sync uses it to decide what to push, when the resolution happened and when the file may leave the notebook.
+
 ---
 
 # 25. Repository relationship
@@ -824,7 +882,7 @@ The automation project should not attempt to replace the solution repository.
 The production schedule runs on GitHub Actions, not on the user's machine:
 
 ```text
-GitHub Actions cron (00:30 UTC)
+GitHub Actions cron (01:15 UTC)
     ↓
 Python pipeline
     ├── Neon PostgreSQL (metadata)
@@ -844,7 +902,33 @@ Authentication uses two secrets:
 
 The automation repository itself uses the built-in `GITHUB_TOKEN`.
 
-The catch-up window (`LEETCODE_BACKFILL_DAYS`, default 60) makes the schedule self-healing: if GitHub delays a run or LeetCode is temporarily unavailable, the next successful run fills the gap.
+The catch-up window (`LEETCODE_BACKFILL_DAYS`, default 60 in the code and 30 in the workflow) makes the schedule self-healing: if GitHub delays a run or LeetCode is temporarily unavailable, the next successful run fills the gap.
+
+The schedule is a low-priority trigger and GitHub may start the run hours after the cron time. The delay is harmless: the backfill runs before the collection and covers the days up to yesterday, and the collection always picks the challenge that is active now. The cron is expressed in UTC, so a daylight saving change in the user's country never moves the collection off the challenge.
+
+## 25.2 The notebook loop
+
+The cloud collects; the notebook solves. The two halves meet in the solution repository.
+
+```text
+GitHub Actions                    Notebook (scripts/sync.py)
+──────────────                    ─────────────────────────
+collect → generate                git pull    → the template arrives
+commit the template               the user solves it
+                                  # Solved
+Neon (the ledger)                 git push    → the solution goes up
+                                  Neon        → status = CONCLUDED
+```
+
+The three roles are clear:
+
+* the **repository** is the cloud — it stores every template and every solution;
+* **Neon** is the ledger — it stores the metadata, the status and the timestamps;
+* the **notebook** is the desk — it holds the open challenges and nothing else.
+
+The sync is the only component that writes to the repository from the notebook, and it is safe to run at any time: it pulls, pushes what carries the marker, updates the ledger and rebuilds a challenge the ledger knows but the notebook lost.
+
+A solved file leaves the notebook but stays in the repository. The git index marks it with `skip-worktree`, so the local deletion is invisible to git: the working tree stays clean, the next pull does not bring the file back, and the solution is never overwritten by a regeneration.
 
 ---
 
@@ -870,13 +954,27 @@ Free-tier guardrails:
 
 ---
 
-# 27. Airflow
+# 27. Orchestration
 
-Airflow is planned for a later stage.
+The orchestration is GitHub Actions plus a single local script. Airflow was considered and dropped: the pipeline has one daily step and one local step, and a scheduler that needs its own database, its own deployment and its own operational surface would cost more than it solves.
 
-The Python pipeline should first become reliable and understandable without Airflow.
+What the scheduler provides:
 
-A possible future DAG is:
+* the daily schedule;
+* the retries;
+* the run log and the artifacts;
+* the failure issue.
+
+What the local script provides:
+
+* the pull of the new challenge;
+* the push of the resolution;
+* the update of the ledger;
+* the rebuild of a missing file.
+
+The Python layer keeps the semantic validation and the business rules. Neither the scheduler nor the notebook decides anything about the data.
+
+The Airflow DAG that was once planned here would have been:
 
 ```text
 detect_missing_dates
@@ -894,15 +992,7 @@ process_topics
 generate_file
 ```
 
-Airflow's responsibility should primarily be:
-
-* scheduling;
-* orchestration;
-* retries;
-* task state;
-* observability.
-
-It should not replace the Python layer's semantic validation or business rules.
+That sequence still describes the pipeline, and it still runs as callable steps (`scripts/pipeline.py`). Only the orchestrator changed.
 
 ---
 
@@ -919,7 +1009,8 @@ Examples:
 * GitHub Actions is justified because the collection must run while the home machine is off.
 * Neon is justified because a scheduled remote runner needs a database that is not on the home network.
 * `daily_challenges` is justified because the same problem can be reused as a Daily Challenge.
-* Airflow is justified when orchestration becomes useful; the current cron + catch-up window is enough for one daily job.
+* The notebook sync is justified because the collection runs in the cloud while the resolution happens on the machine.
+* Airflow was considered and dropped: the current cron + catch-up window + one local script is enough for one daily job.
 * Additional infrastructure should only be introduced when the project has a concrete need for it.
 
 The goal is a coherent system, not a collection of technologies.

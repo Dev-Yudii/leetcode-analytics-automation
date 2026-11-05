@@ -2,6 +2,27 @@
 This file goal is tracking the project evolution. I'll use it to note down new features, things that broke, fixes I applied, and the tools/best practices I'm learning along the way.
 
 
+## 2026-11-05 (Notebook loop)
+### What's New
+- **The cloud collects, the notebook solves.** The roles are now explicit: the solution repository is the cloud (it stores every template and every solution), Neon is the ledger (metadata, status, timestamps) and the notebook is the desk (it holds the open challenges and nothing else).
+- **`scripts/sync.py` (the notebook sync):** runs on the notebook and does both directions — it pulls the repository (the new template arrives), pushes the files that carry the solved marker, updates the ledger and rebuilds a challenge the ledger knows but the notebook lost. It is safe to run at any time and is meant to be triggered by the Windows Task Scheduler at the first login of the day.
+- **The solved marker:** the template ends with the instruction to add a line reading `# Solved`. The detection is a line-anchored pattern that accepts `# Solved`, `#solved` and `# --solved`, in any case, and never matches the instruction itself. The solution is **not** a second file: the template is replaced by the resolution, in the same file, and the git history keeps both versions.
+- **Lifecycle timestamps:** `problems` now carries `generated_at` (the cloud extracted the challenge), `collected_at` (the file reached the notebook) and `solved_at` (the file was marked solved). The new view `v_resolution` exposes `resolution_hours`, `resolution_days` and `cloud_latency_hours`. The metric that matters is `solved_at - collected_at`: how long the challenge waited on the notebook.
+- **A solved file leaves the notebook but stays in the repository.** The git index marks it with `skip-worktree`, so the local deletion is invisible to git: the working tree stays clean, the next pull does not bring the file back and a regeneration never overwrites a resolution.
+- **`.env` on the notebook:** `python-dotenv` loads a local, gitignored file that never overrides a real environment variable — the GitHub Actions secret always wins in CI. `.env.example` documents every variable.
+- **Data reset:** `scripts/reset_collected_data.py` removes every collected day except the one kept, so the ledger starts from the new daily challenge. The topic catalog in `data/topics.json` is never touched: the IDs stay stable and the `topics` table is rebuilt from the challenges collected from now on.
+- **Docs:** README, TODO and `docs/architecture.md` now describe the notebook loop, the timestamps and the marker. The Airflow plan was dropped — GitHub Actions plus one local script is enough for one daily job — and the architecture keeps the pipeline sequence, but the orchestrator changed.
+
+### Fixes & Tweaks
+- **The schedule was disabled by inactivity.** GitHub turns scheduled workflows off after 60 days without a push. A commit in the branch default brought it back, and the first run confirmed it: the collection fired, with the usual delay of a low-priority trigger.
+- **The cron moved to 01:15 UTC (22:15 BRT).** The cron is expressed in UTC, which is what GitHub uses, so a daylight saving change in the country never moves the collection off the challenge (it changes at 00:00 UTC). The offset also avoids the crowded top of the hour.
+- **A rejected push used to lose the generated files.** The workflow committed and pushed without rebasing: if the notebook pushed a solution in the meantime, the push was refused, the step failed and the templates were gone — the ledger already had the rows, so the backfill skipped those days and never regenerated them. The checkout now uses the full history and the push rebases first.
+- **The solution folder is deterministic.** The folder came from the first topic LeetCode returned, and the source does not guarantee the order: the same problem could land in two folders. It now comes from the alphabetically first topic, so a re-run never duplicates a file.
+- **The backfill has a floor.** The data was restarted on 2026-11-05, so the backfill ignores anything older. The floor is a single constant in `scripts/backfill.py` and the window is 30 days. Remove the floor on 2026-12-05.
+- **The test fixture no longer hangs.** The test suite waited for minutes when PostgreSQL was unreachable; the connection now has a timeout and the tests are skipped instead.
+- **Tests:** 130 passing, including the solved marker, the deterministic folder, the backfill floor and the whole notebook sync against a real git repository.
+
+
 ## 2026-11-04 (Occurrence ledger + remote runner)
 ### What's New
 - **`daily_challenges` occurrence ledger:** a problem can be the Daily Challenge more than once, so the date-to-problem mapping now lives in its own table instead of overloading `problems.challenge_date`. The pipeline records it right after persistence, and the problem row stays idempotent.

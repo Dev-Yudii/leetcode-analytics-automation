@@ -13,8 +13,15 @@
 - [x] Remote runner workflows (CI, connectivity probe, daily collection)
 - [x] Pilot backfill against a clone database: 4 gaps recovered, 35 problems/occurrences (2026-11-04)
 - [x] Update `docs/architecture.md` with the remote-runner and occurrence-ledger decisions
-- [ ] Deploy the GitHub Actions schedule against Neon (needs secrets)
-- [ ] Run the connectivity probe from GitHub before enabling the schedule
+- [x] Deploy the GitHub Actions schedule against Neon (2026-11-04, secrets configured)
+- [x] Run the connectivity probe from GitHub before enabling the schedule (2026-11-04, green)
+- [x] Notebook sync: the cloud collects, the notebook solves, the ledger tracks (2026-11-05)
+- [x] Resolution timing: `generated_at`, `collected_at`, `solved_at` + `v_resolution` view (2026-11-05)
+
+## Dated reminders
+
+- [ ] **2026-12-05** — remove `BACKFILL_FLOOR` from `scripts/backfill.py`. The collected data was reset on 2026-11-05 and the backfill ignores anything older until then. The window is 30 days (`LEETCODE_BACKFILL_DAYS` in `collect.yml`).
+- [ ] **2026-12-05** — after the floor is gone, confirm that the schedule collects one challenge per day and that the backfill only fills real gaps.
 
 ## Database
 
@@ -29,8 +36,11 @@
 - [x] `status` with `CHECK (status IN ('PENDING','IN_PROGRESS','CONCLUDED'))` (§10)
 - [x] Link `topics.json` to the `topics` table (no independent ID generation, §13)
 - [x] Postgres in Docker Compose with a persistent volume (§26)
+- [x] `generated_at` / `collected_at` / `solved_at` + the `v_resolution` view (§10.2)
+- [x] Reset the collected data to 2026-11-05 (`scripts/reset_collected_data.py`)
 - [ ] `pg_dump` backup (scheduled) — the volume and Neon free plan are not a backup
 - [ ] Delete the legacy SQLite file once the migration is considered stable
+- [ ] A read-only role for the dashboard, separate from the writer role
 
 ## Pipeline
 
@@ -42,11 +52,15 @@
 - [x] Monthly history lookup + per-date replay (`dailyCodingChallengeV2` + `question(titleSlug)`)
 - [x] Backfill CLI (`--backfill`, `--since`, `--until`) and gap detection
 - [x] Retry/backoff in the GraphQL client for 429/5xx responses
-- [ ] `--conclude <id>`: `PENDING → IN_PROGRESS → CONCLUDED` with timestamps (ideas.md, Phase 1)
 - [x] Run the real backfill against the local production database and solutions repository (2026-11-04)
+- [x] Deterministic solution folder (sorted topic), so a re-run never duplicates a file
+- [x] Rebase before pushing the generated solutions (a rejected push used to lose the files)
+- [x] The solved marker (`# Solved`) and the notebook sync (`scripts/sync.py`)
+- [ ] `--conclude <id>`: the marker already closes a challenge automatically; the command is only useful to close one by hand
 
 ## Later
 
-- [ ] Airflow DAG: `detect_missing_dates → collect → validate → persist → record_daily_challenge → process_topics → generate` (§27)
 - [ ] Scheduled database backup
+- [ ] A dashboard over `v_resolution`: filters by date, difficulty and topic, plus the statistics of the solved exercises
 - [ ] Consider per-run retry budget for transient LeetCode failures
+- [ ] The Windows Task Scheduler entry that runs `scripts/sync.py` at the first login of the day

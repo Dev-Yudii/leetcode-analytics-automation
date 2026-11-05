@@ -49,16 +49,51 @@ No login, no credentials, and no extra traffic during a healthy daily run.
 3. **Persist**: the problem is registered in PostgreSQL with status `PENDING`. Re-running never creates a duplicate and never overwrites a value that was already collected.
 4. **Record occurrence**: `daily_challenges` records which problem was the Daily Challenge on that date. A problem can be reused on another day, so this ledger is separate from the problem catalog.
 5. **Topics**: names are normalized and registered in the versioned `data/topics.json` catalog (stable IDs, never reused). The same IDs are written to `topics`, and the problem is linked to all its topics in `problem_topics`.
-6. **Generate**: a ready-to-solve file named `{ID}_{slug}.py` is created under the first topic's folder, with metadata, starter code and local tests. An existing file is never overwritten.
+6. **Generate**: a ready-to-solve file named `{ID}_{slug}.py` is created under the topic folder, with metadata, starter code and local tests. An existing file is never overwritten.
 
 Every step is isolated: a failure in one of them does not cancel the others, it marks the run as *degraded* instead of losing the day. `collection_runs` and `collection_events` keep the audit — that is what tells "did not collect" from "collection failed".
 
+## The Notebook Loop
+
+The cloud collects; the notebook solves. The two halves meet in the solution repository.
+
+```text
+GitHub Actions (01:15 UTC)          Your notebook (first login of the day)
+──────────────────────────          ─────────────────────────────────────
+collect → generate                  scripts/sync.py
+  ↓                                    ↓
+commit the template                  git pull     → the new template arrives
+  ↓                                    ↓
+Neon (the ledger)                   you solve it and add "# Solved"
+                                     ↓
+                                   git push     → the solution goes up
+                                     ↓
+                                   Neon         → status = CONCLUDED
+```
+
+The solution is **not a second file**: the template is replaced by the resolution, in the same file. The repository keeps both versions in its history, and the notebook only keeps what is still open.
+
+* The **repository** is the cloud: it stores every template and every solution.
+* **Neon** is the ledger: it stores the metadata and the timestamps.
+* The **notebook** is the desk: it holds the open challenges and nothing else.
+
+Three timestamps are tracked per problem:
+
+| Column | Meaning |
+| --- | --- |
+| `generated_at` | when the cloud extracted the challenge from LeetCode |
+| `collected_at` | when the file reached the notebook for the first time |
+| `solved_at` | when the file was marked solved (its last modification time) |
+
+The metric that follows is `solved_at - collected_at`: how long the challenge waited for you. The view `v_resolution` exposes `resolution_hours`, `resolution_days` and `cloud_latency_hours`.
+
 
 ## Data Model
-- `problems`: one row per LeetCode problem.
+- `problems`: one row per LeetCode problem, with the status and the three timestamps.
 - `daily_challenges`: one row per date, pointing to the problem that was the Daily Challenge. This records repeated challenges correctly.
 - `topics` / `problem_topics`: topic identity from `data/topics.json` and its associations.
 - `collection_runs` / `collection_events`: collection audit and warnings.
+- `v_resolution`: a view with the resolution time of every solved challenge.
 
 The full design is in [docs/architecture.md](./docs/architecture.md).
 
@@ -75,6 +110,20 @@ uv run python main.py
 
 The run appends to `logs/pipeline.log` and exits with `0` (everything went fine), `1` (nothing was collected) or `2` (collected, but a step failed) — so a scheduler can tell success from failure.
 
+### The notebook sync
+
+```bash
+# pull the new challenges, push the ones you solved, update the ledger
+uv run python scripts/sync.py
+
+# see what it would do, without changing anything
+uv run python scripts/sync.py --dry-run
+```
+
+The sync runs against the solution repository (the same folder the files live in) and the database. It is safe to run at any time and as often as you want — the Windows Task Scheduler runs it at the first login of the day.
+
+To mark a challenge as solved, add a line with `# Solved` at the end of the file. The template tells you where. Nothing else is needed: the next sync pushes the solution, records `solved_at` from the file's last modification time, and removes the file from your notebook — it stays in the repository.
+
 ### Recovering missed days
 
 ```bash
@@ -87,6 +136,8 @@ uv run python main.py --backfill --since 2026-10-01 --until 2026-10-31
 
 Backfill detects dates without a `daily_challenges` row, fetches the monthly history, and runs the normal pipeline for each missing day. It is idempotent and continues when one day fails. With no `--since`, the daily scheduled run checks the last `LEETCODE_BACKFILL_DAYS` days.
 
+> **Temporary rule:** since the data was restarted on 2026-11-05, the backfill ignores anything older than that date. Remove `BACKFILL_FLOOR` from `scripts/backfill.py` on **2026-12-05** to restore the full window.
+
 ### Configuration
 
 | Variable | Default | Purpose |
@@ -96,6 +147,8 @@ Backfill detects dates without a `daily_challenges` row, fetches the monthly his
 | `LEETCODE_OUTPUT_DIR` | `<user>/Problem-Solving/LeetCode` | Where the solution files live |
 | `LEETCODE_DB_TIMEOUT` | `10` | Seconds to wait for the database |
 | `LEETCODE_BACKFILL_DAYS` | `60` | Lookback window when `--since` is omitted |
+
+On the notebook, the connection string lives in a local `.env` file (copy `.env.example`). It is gitignored, and a real environment variable always wins over it — so the GitHub Actions secret is never overridden by an accidental local file.
 
 ### Database tasks
 
@@ -115,7 +168,7 @@ docker exec leetcode-postgres pg_dump -U leetcode -d leetcode_analytics \
 The daily job is designed to run even when the home computer is off:
 
 ```text
-GitHub Actions (00:30 UTC)
+GitHub Actions (01:15 UTC)
   ├─ recover gaps from the monthly LeetCode history
   ├─ collect today's challenge
   ├─ persist in Neon
@@ -123,6 +176,10 @@ GitHub Actions (00:30 UTC)
   ├─ commit data/topics.json back to this repo
   └─ upload the log and open an issue on failure
 ```
+
+The cron is written in UTC, which is what GitHub uses. The Daily Challenge changes at 00:00 UTC, so the 01:15 UTC schedule always collects the new challenge — and a daylight saving change in your country never moves the collection off the challenge.
+
+> The schedule is a low-priority trigger: GitHub may start the run hours after the cron time. That is harmless — the backfill window recovers anything the delay left behind.
 
 Workflows:
 - `.github/workflows/ci.yml`: tests against a PostgreSQL service container.
@@ -152,8 +209,11 @@ Run `probe.yml` manually after the first push: it proves that a GitHub runner ca
 - [x] PostgreSQL (`problems`, `topics`, `problem_topics`) + collection audit
 - [x] Idempotent pipeline (safe to re-run, safe to schedule)
 - [x] `daily_challenges` occurrence ledger + backfill/catch-up
-- [ ] Deploy the GitHub Actions schedule against Neon
+- [x] Remote runner workflows (CI, connectivity probe, daily collection)
+- [x] Notebook sync: the cloud collects, the notebook solves, the ledger tracks
+- [x] Resolution timing (`generated_at`, `collected_at`, `solved_at`)
 - [ ] Scheduled `pg_dump` backups
-- [ ] Airflow DAG: `collect → validate → persist → process_topics → generate`
+- [ ] A read-only database role for the future dashboard
+- [ ] A dashboard over `v_resolution` (filters by date, difficulty and topic)
 
 See [TODO.md](./TODO.md) for the current working plan and [CHANGELOG.md](./CHANGELOG.md) for history.
