@@ -21,9 +21,12 @@ Usage:
 """
 
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.generator import generate_daily_file
 from scripts.leetcode_client import get_challenge_for_date
@@ -136,7 +139,7 @@ def solution_files(root: Path) -> list[Path]:
 # --------------------------------------------------------------------------
 
 
-def _record_collection(problem_id: str, result: SyncResult, logger) -> None:
+def _record_collection(problem_id: str, result: SyncResult, logger, dry_run: bool = False) -> None:
     """Write the first collection time of a challenge that reached the notebook."""
     try:
         row = get_problem(problem_id)
@@ -151,6 +154,10 @@ def _record_collection(problem_id: str, result: SyncResult, logger) -> None:
         return
 
     if row.get("collected_at") is not None:
+        return
+
+    if dry_run:
+        logger.info(f"[dry-run] would record the collection of #{problem_id}")
         return
 
     try:
@@ -188,7 +195,7 @@ def _push_solved_files(repo: Path, root: Path, result: SyncResult, logger, dry_r
         # The collection time is written on the first sighting, whether the
         # file is still open or already carries the marker: the resolution
         # time must always have a starting point.
-        _record_collection(problem_id, result, logger)
+        _record_collection(problem_id, result, logger, dry_run)
 
         if not is_solved(path):
             continue

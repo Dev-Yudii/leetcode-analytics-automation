@@ -12,12 +12,23 @@ LOG_DIR = Path(__file__).resolve().parents[1] / "logs"
 LOG_FILE = LOG_DIR / "pipeline.log"
 
 
+def _use_replace_on_console() -> None:
+    """The Windows console is often cp1252: a non-ASCII character would
+    raise UnicodeEncodeError and kill the run."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
 class RunLogger:
     """Writes the same line to the console and to the log file."""
 
     def __init__(self, path: Path | None = None, echo: bool = True):
         self.path = Path(path) if path else LOG_FILE
         self.echo = echo
+        _use_replace_on_console()
 
     def _write(self, level: str, message: str) -> None:
         timestamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %z")

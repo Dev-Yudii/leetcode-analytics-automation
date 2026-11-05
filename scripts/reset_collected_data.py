@@ -14,7 +14,11 @@ Usage:
 """
 
 import argparse
+import sys
 from datetime import date, datetime, timezone
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.db_utils import get_connection
 
@@ -65,6 +69,10 @@ def preview(keep_date: date) -> dict:
 
 def reset(keep_date: date, dry_run: bool = False) -> dict:
     """Remove every collected day except the given one."""
+    if dry_run:
+        return preview(keep_date)
+
+    removed = {}
     with get_connection() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
@@ -74,35 +82,47 @@ def reset(keep_date: date, dry_run: bool = False) -> dict:
                 (keep_date,),
             )
 
-            if dry_run:
-                conn.rollback()
-                return preview(keep_date)
-
             cursor.execute(
                 "DELETE FROM collection_events WHERE run_id NOT IN"
                 " (SELECT id FROM collection_runs"
                 "  WHERE problem_id IN (SELECT id FROM _keep))"
             )
+            removed["events"] = cursor.rowcount
+
             cursor.execute(
                 "DELETE FROM collection_runs WHERE id NOT IN"
                 " (SELECT id FROM collection_runs"
                 "  WHERE problem_id IN (SELECT id FROM _keep))"
             )
+            removed["runs"] = cursor.rowcount
+
             cursor.execute(
                 "DELETE FROM daily_challenges WHERE challenge_date <> %s", (keep_date,)
             )
+            removed["occurrences"] = cursor.rowcount
+
             cursor.execute(
                 "DELETE FROM problem_topics WHERE problem_id NOT IN (SELECT id FROM _keep)"
             )
+            removed["problem_topics"] = cursor.rowcount
+
             cursor.execute("DELETE FROM problems WHERE id NOT IN (SELECT id FROM _keep)")
+            removed["problems"] = cursor.rowcount
+
             cursor.execute(
                 "DELETE FROM topics WHERE id NOT IN (SELECT topic_id FROM problem_topics)"
             )
+            removed["topics"] = cursor.rowcount
+
             cursor.execute("DROP TABLE _keep")
 
         conn.commit()
 
-    return preview(keep_date)
+    report = preview(keep_date)
+    report["removed"] = removed
+    report["problems_to_delete"] = removed["problems"]
+    report["occurrences_to_delete"] = removed["occurrences"]
+    return report
 
 
 def main(argv=None) -> int:
