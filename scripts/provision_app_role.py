@@ -15,18 +15,24 @@ Usage:
     uv run python scripts/provision_app_role.py            # dry run
     uv run python scripts/provision_app_role.py --apply    # do it
 
-The admin connection comes from `LEETCODE_ADMIN_DB_URL` (environment or
-`.env`). The application connection string is written to `.env` as
-`LEETCODE_DB_URL`.
+The owner connection is NOT stored in `.env`. It is a cluster-level
+credential and the `.env` file is read by every single run of the
+pipeline. It comes from the environment instead, for the one command
+that needs it:
 
-The generated password is never printed and never leaves the machine:
-it is written straight to `.env`. The script prints the shape of the
-connection (scheme, host, database, user) and nothing else.
+    $env:LEETCODE_ADMIN_DB_URL="postgresql://neondb_owner:...@host/neondb?sslmode=require"
+    uv run python scripts/provision_app_role.py --apply
+
+The application connection string is written to `.env` as
+`LEETCODE_DB_URL`. The generated password is never printed and never
+reaches a command line: the script prints the shape of the connection
+(scheme, host, database, user) and nothing else.
 """
 
 import argparse
 import os
 import secrets
+import subprocess
 import sys
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
@@ -35,7 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from dotenv import load_dotenv
 
-from scripts.db_utils import PROJECT_ROOT
+from scripts.db_utils import PROJECT_ROOT, connection_shape
 
 APP_ROLE = "leetcode_app"
 ADMIN_URL_ENV = "LEETCODE_ADMIN_DB_URL"
@@ -85,15 +91,44 @@ def _set_env_value(lines: list[str], key: str, value: str) -> list[str]:
     return updated
 
 
-def _connection_shape(url: str) -> str:
-    """The connection without the secret, for the console."""
-    parts = urlsplit(url)
-    user = parts.username or ""
-    return (
-        f"{parts.scheme}://{user}@{parts.hostname}"
-        f"{f':{parts.port}' if parts.port else ''}"
-        f"{parts.path} (password hidden)"
-    )
+def _remove_env_value(lines: list[str], key: str) -> list[str]:
+    """Drop a line from the .env file."""
+    prefix = f"{key}="
+    return [line for line in lines if not line.startswith(prefix)]
+
+
+def _write_app_url(app_url: str) -> None:
+    """Write the application connection string to `.env`.
+
+    Only the application credential goes to the file. The owner
+    credential is never written: it comes from the environment, for the
+    one command that needs it. Any leftover owner line is dropped here,
+    so the file cannot keep it by accident.
+    """
+    lines = _set_env_value(_read_env_file(), DB_URL_ENV, app_url)
+    lines = _remove_env_value(lines, ADMIN_URL_ENV)
+    _write_env_file(lines)
+
+
+def _copy_to_clipboard(text: str) -> bool:
+    """Put the text in the Windows clipboard.
+
+    The clipboard is not a command line and not a log: the value goes
+    from the process to the user's hands without passing through the
+    console, the transcript or a file.
+    """
+    try:
+        result = subprocess.run(
+            ["clip"],
+            input=text,
+            text=True,
+            capture_output=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+    return result.returncode == 0
 
 
 def _url_for_role(admin_url: str, role: str, password: str) -> str:
@@ -171,7 +206,6 @@ def provision(admin_url: str, apply: bool) -> dict:
                     "role_exists": exists,
                     "objects": objects,
                     "app_url": _url_for_role(admin_url, APP_ROLE, password),
-                    "admin_url": admin_url,
                 }
 
             # Each statement is labelled: a failure reports which one it
@@ -255,7 +289,6 @@ def provision(admin_url: str, apply: bool) -> dict:
         "role_exists": exists,
         "objects": objects,
         "app_url": _url_for_role(admin_url, APP_ROLE, password),
-        "admin_url": admin_url,
         "app_privileges": app_privileges,
         "admin_privileges": admin_privileges,
     }
@@ -264,9 +297,14 @@ def provision(admin_url: str, apply: bool) -> dict:
 def rotate_owner_password(admin_url: str) -> str:
     """Give the database owner a new password.
 
-    The password is generated at runtime and written straight to `.env`:
-    it is never printed and never reaches a command line. Use it when a
-    credential may have been exposed — the old password dies here.
+    The password is generated at runtime and handed over through the
+    clipboard: it is never printed, never reaches a command line and
+    never lands in a file. Use it when a credential may have been
+    exposed — the old password dies here.
+
+    The caller is responsible for the hand-over: the new connection
+    string has to reach the place where the owner credential lives
+    (the Neon console, a password manager).
     """
     import psycopg
     from psycopg import sql
@@ -303,7 +341,7 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--rotate-owner",
         action="store_true",
-        help="give the database owner a new password and update .env",
+        help="give the database owner a new password and copy it to the clipboard",
     )
     args = parser.parse_args(argv)
 
@@ -313,6 +351,28 @@ def main(argv=None) -> int:
         print(
             f"[ERROR] {ADMIN_URL_ENV} is not set. It holds the connection"
             " string of the database owner."
+        )
+        print("")
+        print(
+            "        The owner credential is not stored in .env on purpose:"
+            " it is a cluster-level credential and the file is read by"
+            " every run of the pipeline."
+        )
+        print("")
+        print("        Paste it into the environment for this one command:")
+        print("")
+        print(
+            '            $env:LEETCODE_ADMIN_DB_URL="postgresql://neondb_owner:...'
+            '@host/neondb?sslmode=require"'
+        )
+        print(
+            "            uv run python scripts/provision_app_role.py"
+            + (" --rotate-owner" if args.rotate_owner else " --apply")
+        )
+        print("")
+        print(
+            "        The connection string of the owner is in the Neon"
+            " console: Dashboard -> Connection string -> neondb_owner."
         )
         return 1
 
@@ -329,12 +389,28 @@ def main(argv=None) -> int:
             )
             return 1
 
-        lines = _set_env_value(_read_env_file(), ADMIN_URL_ENV, new_admin_url)
-        _write_env_file(lines)
+        copied = _copy_to_clipboard(new_admin_url)
 
         print("The owner password was rotated.")
-        print(f"  owner url : {_connection_shape(new_admin_url)}")
-        print(f"  written   : .env ({ADMIN_URL_ENV})")
+        print(f"  owner url : {connection_shape(new_admin_url)}")
+        if copied:
+            print("  hand-over : the new connection string is in the clipboard")
+            print(
+                "              paste it in the Neon console (Dashboard ->"
+                " Connection string -> neondb_owner) and in your password"
+                " manager. The old password is already dead."
+            )
+        else:
+            print(
+                "  hand-over : FAILED — the clipboard is not available, so"
+                " the new connection string is lost."
+            )
+            print(
+                "              The old password is already dead: reset the"
+                " owner password from the Neon console"
+                " (Dashboard -> Roles -> neondb_owner)."
+            )
+            return 1
         return 0
 
     try:
@@ -359,14 +435,11 @@ def main(argv=None) -> int:
         for name, kind, linked in report["objects"]:
             suffix = " (with its table)" if linked else ""
             print(f"             {kind} public.{name}{suffix}")
-        print(f"  app url  : {_connection_shape(report['app_url'])}")
+        print(f"  app url  : {connection_shape(report['app_url'])}")
         print("  written  : .env (LEETCODE_DB_URL)")
         return 0
 
-    lines = _read_env_file()
-    lines = _set_env_value(lines, DB_URL_ENV, report["app_url"])
-    lines = _set_env_value(lines, ADMIN_URL_ENV, report["admin_url"])
-    _write_env_file(lines)
+    _write_app_url(report["app_url"])
 
     privileges = report.get("app_privileges", {})
     print(f"Role {APP_ROLE} is ready.")
@@ -374,8 +447,8 @@ def main(argv=None) -> int:
     print(f"  superuser  : {privileges.get('superuser')}")
     print(f"  createdb   : {privileges.get('createdb')}")
     print(f"  createrole : {privileges.get('createrole')}")
-    print(f"  app url    : {_connection_shape(report['app_url'])}")
-    print(f"  written    : .env ({DB_URL_ENV} and {ADMIN_URL_ENV})")
+    print(f"  app url    : {connection_shape(report['app_url'])}")
+    print(f"  written    : .env ({DB_URL_ENV})")
     return 0
 
 

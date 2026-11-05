@@ -12,6 +12,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 from scripts.db_utils import apply_schema, get_connection
+from scripts.redact import redact
 
 INSERTED = "inserted"
 ENRICHED = "enriched"
@@ -27,22 +28,26 @@ class PersistenceError(Exception):
 
 
 def _translate(error: Exception) -> PersistenceError:
-    """Turn a driver error into a message that names the real cause."""
+    """Turn a driver error into a message that names the real cause.
+
+    The message of a driver error can carry the connection string, so
+    it is redacted before it travels any further.
+    """
     if isinstance(error, psycopg.errors.UniqueViolation):
-        return PersistenceError(f"the record already exists: {error}")
+        return PersistenceError(f"the record already exists: {redact(error)}")
     if isinstance(error, psycopg.errors.ForeignKeyViolation):
-        return PersistenceError(f"foreign key violation: {error}")
+        return PersistenceError(f"foreign key violation: {redact(error)}")
     if isinstance(error, psycopg.errors.CheckViolation):
-        return PersistenceError(f"check constraint violated: {error}")
+        return PersistenceError(f"check constraint violated: {redact(error)}")
     if isinstance(error, psycopg.errors.InsufficientPrivilege):
-        return PersistenceError(f"the database refused the operation: {error}")
+        return PersistenceError(f"the database refused the operation: {redact(error)}")
     if isinstance(error, psycopg.OperationalError):
-        return PersistenceError(f"could not reach the database: {error}")
+        return PersistenceError(f"could not reach the database: {redact(error)}")
     if isinstance(error, psycopg.Error):
-        return PersistenceError(f"database error: {error}")
+        return PersistenceError(f"database error: {redact(error)}")
     if isinstance(error, OSError):
-        return PersistenceError(f"network or file error: {error}")
-    return PersistenceError(f"unexpected error: {error!r}")
+        return PersistenceError(f"network or file error: {redact(error)}")
+    return PersistenceError(f"unexpected error: {redact(error)!r}")
 
 
 def _is_empty(value) -> bool:

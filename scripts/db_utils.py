@@ -7,6 +7,7 @@ runs locally, in Docker and in GitHub Actions.
 
 import os
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import psycopg
 from psycopg.rows import dict_row
@@ -30,6 +31,31 @@ load_dotenv()
 def get_db_url() -> str:
     """Connection string of the operational database."""
     return os.environ.get(DB_URL_ENV, DEFAULT_DB_URL)
+
+
+def connection_shape(url: str) -> str:
+    """The connection without the secret, for the console.
+
+    The shape answers the question a diagnostic really asks — which
+    server, which database, which user — and it cannot be reused
+    against the server. The password appears only as its length.
+    """
+    parts = urlsplit(url or "")
+
+    scheme = parts.scheme or "?"
+    user = parts.username or ""
+    host = parts.hostname or "?"
+    port = f":{parts.port}" if parts.port else ""
+    database = parts.path or "/"
+    query = f"?{parts.query}" if parts.query else ""
+
+    return f"{scheme}://{user}:***@{host}{port}{database}{query}"
+
+
+def password_length(url: str) -> int:
+    """How many characters the password of the connection has."""
+    parts = urlsplit(url or "")
+    return len(parts.password or "")
 
 
 def get_connection() -> psycopg.Connection:
@@ -85,7 +111,11 @@ if __name__ == "__main__":
             print(">>> Success! Database modified, no rows returned.")
 
     except Exception as e:
-        print(f"\n[ERROR] Operation failed. Details: {e}")
+        # The message of a driver error can carry the connection
+        # string: it is redacted before it reaches the console.
+        from scripts.redact import redact
+
+        print(f"\n[ERROR] Operation failed. Details: {redact(e)}")
 
 
 """

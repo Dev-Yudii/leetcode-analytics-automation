@@ -3,8 +3,8 @@ REM ---------------------------------------------------------------------------
 REM Notebook sync: pulls the new challenge, pushes the solution and updates
 REM the ledger in Neon.
 REM
-REM This is the entry point of the Windows Task Scheduler task that runs at
-REM the first logon of the day. The output goes to logs\sync-task.log: no
+REM This is the entry point of the Windows Task Scheduler task that runs
+REM once a day, at 06:00. The output goes to logs\sync-task.log: no
 REM console window pops up, and the history of the runs is always there.
 REM
 REM The project folder and the uv path below are specific to this machine.

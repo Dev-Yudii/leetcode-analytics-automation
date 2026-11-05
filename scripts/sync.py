@@ -41,6 +41,7 @@ from scripts.persistence import (
     set_collected_at,
 )
 from scripts.pipeline import DEGRADED, EXIT_DEGRADED, EXIT_FATAL, EXIT_OK, FAILED, OK
+from scripts.redact import redact
 from scripts.runlog import RunLogger
 from scripts.solution_file import is_solved, problem_id_from_path
 
@@ -79,7 +80,7 @@ def _git(args: list[str], repo: Path, check: bool = True):
     )
     if check and result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
-        raise SyncError(f"git {' '.join(args)} failed: {detail}")
+        raise SyncError(f"git {' '.join(args)} failed: {redact(detail)}")
     return result
 
 
@@ -90,7 +91,7 @@ def pull(repo: Path) -> str:
     )
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
-        raise SyncError(f"could not pull the repository: {detail}")
+        raise SyncError(f"could not pull the repository: {redact(detail)}")
     return result.stdout.strip()
 
 
