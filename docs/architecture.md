@@ -787,7 +787,27 @@ The operational database has two roles:
 
 The ownership of a table carries the ownership of the sequences generated for its serial columns. A sequence that belongs to a column cannot change its owner on its own — Postgres refuses it — so the table is transferred and the sequence follows.
 
-The application connection string lives in `LEETCODE_DB_URL`; the owner connection lives in `LEETCODE_ADMIN_DB_URL` and is read by one script only. `scripts/provision_app_role.py` creates the role and writes the new connection string straight into `.env`: the generated password is never printed and never leaves the machine.
+`scripts/provision_app_role.py` creates the role and writes the **application** connection string straight into `.env`: the generated password is never printed and never leaves the machine.
+
+## 21.4 A credential is never printed
+
+The rule:
+
+> A credential is never printed. The diagnostic shows the shape.
+
+A connection string that reaches a terminal reaches the log, and a log that reaches a transcript is a credential that has to be rotated. The shape — scheme, host, database, user, and the length of the password — answers the question a diagnostic really asks and cannot be reused against the server.
+
+Three mechanisms carry the rule:
+
+| | What it does |
+| --- | --- |
+| `scripts/show_db_config.py` | prints the shape of every connection, and where the value comes from (`.env` or a real environment variable) |
+| `scripts/redact.py` | removes the credentials from any message before it leaves the process — the passwords of the environment, the passwords of a connection string, the labelled secrets |
+| the provisioning script | writes the application credential to `.env` and never the owner one; a rotated owner password is handed over through the clipboard |
+
+The owner credential is **not in `.env`**. It is a cluster-level credential, and the file is read by every single run of the pipeline. When a role has to be provisioned, the owner connection string is pasted into the environment for that one command. The source of truth for it is the Neon console — *Dashboard → Connection string → neondb_owner* — not a file on the machine.
+
+The consequence is deliberate: the agent that runs the pipeline has the access the user has, and the way to keep that access from becoming an exposure is to reduce what the agent routinely touches. The file it reads on every run holds one credential, the least-privileged one.
 
 ---
 

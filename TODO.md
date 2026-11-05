@@ -19,6 +19,7 @@
 - [x] Resolution timing: `generated_at`, `collected_at`, `solved_at` + `v_resolution` view (2026-11-05)
 - [x] `PENDING.md`: the index of the open challenges at the root of the solutions repository (2026-11-05)
 - [x] The application role `leetcode_app`: the pipeline no longer runs as the database owner (2026-11-05)
+- [x] The credential hardening: the owner connection leaves `.env`, the diagnostics show the shape and never the secret (2026-11-05)
 
 ## Dated reminders
 
@@ -67,5 +68,5 @@
 - [ ] Scheduled database backup
 - [ ] A dashboard over `v_resolution`: filters by date, difficulty and topic, plus the statistics of the solved exercises
 - [ ] Consider per-run retry budget for transient LeetCode failures
-- [ ] **Create the Windows Task Scheduler entry** (manual, one time): trigger *Daily* at **06:00**, action `scripts\sync_notebook.cmd`, no AC-power condition, "run as soon as possible after a missed start", "do not start a new instance", restart every 1 minute up to 3 times. The README has the full table.
-- [ ] Update the GitHub Actions secret `LEETCODE_DB_URL` to the `leetcode_app` connection string (the pipeline now uses the application role, not the owner)
+- [ ] **Create the Windows Task Scheduler entry** (manual, one time): trigger *Daily* at **06:00**, action `scripts\sync_notebook.cmd`, no AC-power condition, "run as soon as possible after a missed start", "do not start a new instance", restart every 1 minute up to 3 times. The README has the full table. Registering it from a script needs an **elevated** PowerShell — the root of the Task Scheduler refuses a standard user. The script is `scripts\register_sync_task.ps1`; the alternative is creating it by hand in the GUI.
+- [ ] Update the GitHub Actions secret `LEETCODE_DB_URL` to the `leetcode_app` connection string (the pipeline now uses the application role, not the owner). The `SOLUTIONS_REPO_TOKEN` is a different credential and does not need to change.

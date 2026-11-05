@@ -148,12 +148,14 @@ Create the task in **Task Scheduler** (`taskschd.msc`) with **Create Task** (not
 | --- | --- |
 | Triggers | New → *Daily*, start at **06:00** |
 | Actions | New → *Start a program* → `…\leetcode-analytics-automation\scripts\sync_notebook.cmd` → *Start in*: `…\leetcode-analytics-automation` |
-| Conditions | Uncheck *Start only if the computer is on AC power*; check *Start only if a network connection is available* |
-| Settings | Check *Run the task as soon as possible after a scheduled start is missed*; check *If the task is already running, do not start a new instance*; check *Allow the task to be run on demand*; *If the task fails, restart every* **1 minute**, *up to* **3 times** |
+| Conditions | Uncheck *Start only if the computer is on AC power*; check *Start only if a network connection is available*; *If the task is already running* → **Do not start a new instance** |
+| Settings | Check *Run the task as soon as possible after a scheduled start is missed*; check *Allow the task to be run on demand*; *If the task fails, restart every* **1 minute**, *up to* **3 times** |
 
 A daily trigger means **one run per day**, never before 06:00, no matter how many times you log in. If the computer was off at 06:00, the task runs the moment you turn it on. The cloud publishes the challenge at 22:15 BRT, so it is always there before the task wakes up.
 
 A failed run is almost always the network not being up yet: the restart rule covers it.
+
+> **Registering it from a script needs an elevated prompt.** The root of the Task Scheduler refuses a programmatic registration for a standard user (*Access denied*). Either create the task by hand with the table above, or run `scripts\register_sync_task.ps1` from an **Administrator** PowerShell — it sets every field of that table and overwrites the task if it already exists.
 
 ### Recovering missed days
 
@@ -175,7 +177,7 @@ Backfill detects dates without a `daily_challenges` row, fetches the monthly his
 | --- | --- | --- |
 | `LEETCODE_DB_URL` | `postgresql://leetcode:leetcode_local_dev@localhost:5432/leetcode_analytics` | Operational database (Neon in production) |
 | `LEETCODE_TEST_DB_URL` | derived from `LEETCODE_DB_URL` | Separate database used by the tests |
-| `LEETCODE_ADMIN_DB_URL` | — | Database owner, used only to provision roles |
+| `LEETCODE_ADMIN_DB_URL` | — | Database owner, **not stored in `.env`** — see below |
 | `LEETCODE_OUTPUT_DIR` | `<user>/Problem-Solving/LeetCode` | Where the solution files live |
 | `LEETCODE_DB_TIMEOUT` | `10` | Seconds to wait for the database |
 | `LEETCODE_BACKFILL_DAYS` | `60` | Lookback window when `--since` is omitted |
@@ -191,6 +193,25 @@ LEETCODE_TEST_DB_URL = Docker          ← the test suite
 
 The test database is created on the server named by `LEETCODE_TEST_DB_URL`, through the `postgres` maintenance database. This matters because the Neon free plan does not allow `CREATE DATABASE`: with the split above, `uv run pytest` still runs the whole suite locally. Docker only needs to be up when you are testing (`docker compose up -d`).
 
+### A credential is never printed
+
+The rule of the project: **a credential is never printed, the diagnostic shows the shape.** A connection string that reaches a terminal reaches the transcript, and a credential in the transcript is a credential that has to be rotated.
+
+```bash
+uv run python scripts/show_db_config.py          # the shape of every connection
+uv run python scripts/show_db_config.py --check  # and who the connection really is
+```
+
+```text
+LEETCODE_DB_URL
+  purpose  : the operational database — the pipeline, the sync and the GitHub secret
+  source   : .env file
+  shape    : postgresql://leetcode_app:***@ep-flat-union-….neon.tech/neondb?sslmode=require
+  password : 43 characters (hidden)
+```
+
+Never read `.env` raw to check a configuration — `show_db_config.py` answers the same question without the secret. Every error message that leaves the pipeline goes through `scripts/redact.py`, which removes the passwords it knows about.
+
 ### Database roles
 
 The pipeline does not run as the database owner. It uses `leetcode_app`, a role that owns the objects it manages — so it can apply the schema — but has no cluster-level powers:
@@ -202,21 +223,28 @@ The pipeline does not run as the database owner. It uses `leetcode_app`, a role 
 | Create roles | yes | **no** |
 | Owns the schema objects | no (since the provisioning) | yes |
 
-```bash
-# see what it would do
-uv run python scripts/provision_app_role.py
-
-# do it (the admin connection comes from LEETCODE_ADMIN_DB_URL)
-uv run python scripts/provision_app_role.py --apply
-```
-
-The script writes the application connection string straight into `.env`. The generated password is never printed and never leaves the machine.
-
 Two connections, two purposes:
 
 ```text
-LEETCODE_DB_URL      = leetcode_app   ← the pipeline, the sync, the GitHub secret
-LEETCODE_ADMIN_DB_URL = neondb_owner  ← only for provisioning a role
+LEETCODE_DB_URL        = leetcode_app   ← the pipeline, the sync, the GitHub secret
+LEETCODE_ADMIN_DB_URL  = neondb_owner   ← only for provisioning a role, and NOT stored
+```
+
+The owner credential is **not in `.env`**. It is a cluster-level credential and the file is read by every single run of the pipeline. When a role has to be provisioned, the owner connection string is pasted into the environment for that one command — it is in the Neon console, under *Dashboard → Connection string → neondb_owner*:
+
+```powershell
+$env:LEETCODE_ADMIN_DB_URL="postgresql://neondb_owner:...@host/neondb?sslmode=require"
+
+uv run python scripts/provision_app_role.py            # see what it would do
+uv run python scripts/provision_app_role.py --apply    # do it
+```
+
+The script writes the **application** connection string straight into `.env`. The generated password is never printed and never leaves the machine.
+
+If the owner password has to be rotated — after an exposure, for instance — the same script does it and hands the new connection string over through the clipboard, never through the console:
+
+```powershell
+uv run python scripts/provision_app_role.py --rotate-owner
 ```
 
 ### Database tasks
