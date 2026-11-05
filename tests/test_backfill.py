@@ -211,3 +211,49 @@ class TestBackfill:
     def test_invalid_date_is_rejected(self):
         with pytest.raises(BackfillError, match="Invalid since"):
             run_backfill(logger=FakeLogger(), since="21/10/2026", until="2026-10-21")
+
+
+class TestBackfillFloor:
+    """The temporary floor keeps the backfill inside the restarted data set."""
+
+    def test_the_floor_ignores_anything_older(
+        self, sample_challenge, monkeypatch
+    ):
+        import scripts.backfill as backfill_module
+
+        monkeypatch.setattr(backfill_module, "BACKFILL_FLOOR", date(2026, 11, 5))
+
+        day_20 = make_challenge(sample_challenge, "2026-10-20", "4001", "problem-4001")
+        source = FakeSource([make_record(day_20)])
+
+        result = run_backfill(
+            logger=FakeLogger(),
+            since=date(2026, 10, 20),
+            until=date(2026, 10, 20),
+            source=source,
+        )
+
+        assert result.since == date(2026, 11, 5)
+        assert result.missing == []
+        assert result.collected == []
+        assert source.detail_calls == []
+
+    def test_the_floor_keeps_the_days_after_it(
+        self, sample_challenge, temp_output_dir, temp_catalog, monkeypatch
+    ):
+        import scripts.backfill as backfill_module
+
+        monkeypatch.setattr(backfill_module, "BACKFILL_FLOOR", date(2026, 11, 5))
+
+        day_06 = make_challenge(sample_challenge, "2026-11-06", "4006", "problem-4006")
+        source = FakeSource([make_record(day_06)])
+
+        result = run_backfill(
+            logger=FakeLogger(),
+            since=date(2026, 11, 5),
+            until=date(2026, 11, 6),
+            source=source,
+        )
+
+        assert result.collected == [date(2026, 11, 6)]
+        assert read_problem_ids() == ["4006"]

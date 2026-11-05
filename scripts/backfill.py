@@ -27,6 +27,11 @@ from scripts.pipeline import (
 # larger than a month so a short trip and the month boundary are covered.
 DEFAULT_LOOKBACK_DAYS = int(os.environ.get("LEETCODE_BACKFILL_DAYS", "60"))
 
+# TEMPORARY (2026-11-05): the pipeline was restarted on this date and the
+# collected data was reset, so the backfill must not pull anything older.
+# Remove this constant on 2026-12-05 to restore the full lookback window.
+BACKFILL_FLOOR = date(2026, 11, 5)
+
 
 class BackfillError(Exception):
     """The backfill cannot start or its arguments are invalid."""
@@ -110,6 +115,12 @@ def run_backfill(
             f"No --since given; checking the last {DEFAULT_LOOKBACK_DAYS} days"
             f" ({parsed_since} to {parsed_until})"
         )
+
+    if BACKFILL_FLOOR and parsed_since < BACKFILL_FLOOR:
+        logger.info(
+            f"Backfill: floor {BACKFILL_FLOOR} applied — ignoring anything older"
+        )
+        parsed_since = BACKFILL_FLOOR
 
     result = BackfillResult(since=parsed_since, until=parsed_until)
     if parsed_since > parsed_until:

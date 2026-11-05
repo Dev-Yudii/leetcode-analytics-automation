@@ -38,6 +38,19 @@ SAMPLE_CONTENT = """
 """
 
 
+@pytest.fixture(autouse=True)
+def no_backfill_floor(monkeypatch):
+    """The temporary production floor must not shape the test fixtures.
+
+    The floor is a production rule: the collected data was reset on
+    2026-11-05 and the backfill must not pull anything older until the
+    rule is removed. The tests use historical dates, so they turn it off.
+    """
+    import scripts.backfill as backfill_module
+
+    monkeypatch.setattr(backfill_module, "BACKFILL_FLOOR", None)
+
+
 @pytest.fixture
 def temp_output_dir(tmp_path, monkeypatch):
     """Redirect the generated files to a temporary folder."""
@@ -70,7 +83,7 @@ def postgres_url(monkeypatch):
     test_url = os.environ.get("LEETCODE_TEST_DB_URL") or base_url.rsplit("/", 1)[0] + "/" + TEST_DB_NAME
 
     try:
-        with psycopg.connect(base_url, autocommit=True) as conn:
+        with psycopg.connect(base_url, autocommit=True, connect_timeout=5) as conn:
             exists = conn.execute(
                 "SELECT 1 FROM pg_database WHERE datname = %s", (TEST_DB_NAME,)
             ).fetchone()
@@ -80,7 +93,7 @@ def postgres_url(monkeypatch):
         pytest.skip(f"PostgreSQL is not reachable: {e}")
 
     try:
-        with psycopg.connect(test_url, autocommit=True) as conn:
+        with psycopg.connect(test_url, autocommit=True, connect_timeout=5) as conn:
             conn.execute("DROP SCHEMA public CASCADE")
             conn.execute("CREATE SCHEMA public")
     except psycopg.Error as e:
