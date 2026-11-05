@@ -2,8 +2,11 @@ name: Daily challenge collection
 
 on:
   schedule:
-    # 03:20 UTC = 00:20 BRT (UTC-3): schedule testing.
-    - cron: "20 3 * * *"
+    # 01:15 UTC = 22:15 BRT (UTC-3). The Daily Challenge changes at 00:00
+    # UTC, so the run always collects the new challenge; the offset avoids
+    # the crowded top of the hour. The cron is UTC, so a local daylight
+    # saving change never moves the collection off the challenge.
+    - cron: "15 1 * * *"
   workflow_dispatch:
     inputs:
       backfill:
@@ -35,6 +38,7 @@ jobs:
     env:
       LEETCODE_DB_URL: ${{ secrets.LEETCODE_DB_URL }}
       LEETCODE_DB_TIMEOUT: "30"
+      LEETCODE_BACKFILL_DAYS: "30"
       LEETCODE_OUTPUT_DIR: ${{ github.workspace }}/solutions
 
     steps:
@@ -47,6 +51,9 @@ jobs:
           repository: Dev-Yudii/leetcode
           token: ${{ secrets.SOLUTIONS_REPO_TOKEN }}
           path: solutions
+          # The full history is needed to rebase before pushing: a push
+          # that is not a fast-forward would lose the generated files.
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -88,7 +95,8 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/topics.json
           git commit -m "chore: update topic catalog [skip ci]"
-          git push
+          git pull --rebase origin main
+          git push origin HEAD:main
 
       - name: Commit generated solutions
         if: always()
@@ -102,7 +110,11 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git commit -m "chore: daily challenge $(date -u +%F)"
-          git push
+          # The notebook may have pushed a solution while this run was
+          # working. Rebasing keeps that commit and avoids losing the
+          # generated files to a rejected push.
+          git pull --rebase origin main
+          git push origin HEAD:main
 
       - name: Upload pipeline log
         if: always()

@@ -10,6 +10,7 @@ from pathlib import Path
 
 import psycopg
 from psycopg.rows import dict_row
+from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = PROJECT_ROOT / "db" / "schema.sql"
@@ -19,6 +20,11 @@ DEFAULT_DB_URL = "postgresql://leetcode:leetcode_local_dev@localhost:5432/leetco
 
 # A scheduler must not wait forever for a database that is not answering.
 CONNECT_TIMEOUT = int(os.environ.get("LEETCODE_DB_TIMEOUT", "10"))
+
+# The local .env file holds the credentials for the notebook. It never
+# overrides a real environment variable, so the GitHub Actions secret
+# always wins in CI. The file is gitignored and never committed.
+load_dotenv()
 
 
 def get_db_url() -> str:
