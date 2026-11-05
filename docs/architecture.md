@@ -748,6 +748,29 @@ The migration removed the old assumptions:
 
 The legacy SQLite file was exported to CSV and migrated. It can be deleted once the PostgreSQL setup is considered stable.
 
+## 21.1 The operational database and the test database
+
+The pipeline and the test suite must never share a database.
+
+```text
+LEETCODE_DB_URL      → Neon          ← the pipeline and the notebook sync
+LEETCODE_TEST_DB_URL → Docker        ← the test suite
+```
+
+The reason is technical, not a preference: the test fixture creates and drops the test database, and the Neon free plan does not allow `CREATE DATABASE`. The test database is therefore created on the server named by `LEETCODE_TEST_DB_URL`, through the `postgres` maintenance database, which always exists. The operational connection string is never used to create a database.
+
+The consequence is a clean split: the production database holds exactly the collected data, and a test run never touches it.
+
+## 21.2 The schema is applied by every entry point
+
+A missing column must never be the reason an operation fails. Each entry point that writes to the database applies the schema before it does anything else:
+
+```text
+ensure_schema() → apply_schema() → db/schema.sql
+```
+
+`db/schema.sql` is idempotent: `CREATE TABLE IF NOT EXISTS`, `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` and `CREATE OR REPLACE VIEW`. The cloud, the notebook sync and the reset script all call it, so none of them depends on the others having run first.
+
 ---
 
 # 22. Important distinction: category vs topic

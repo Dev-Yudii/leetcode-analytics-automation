@@ -120,9 +120,24 @@ uv run python scripts/sync.py
 uv run python scripts/sync.py --dry-run
 ```
 
-The sync runs against the solution repository (the same folder the files live in) and the database. It is safe to run at any time and as often as you want — the Windows Task Scheduler runs it at the first login of the day.
+The sync runs against the solution repository (the same folder the files live in) and the database. It is safe to run at any time and as often as you want — it applies the schema itself, so it never depends on the cloud having run first.
 
 To mark a challenge as solved, add a line with `# Solved` at the end of the file. The template tells you where. Nothing else is needed: the next sync pushes the solution, records `solved_at` from the file's last modification time, and removes the file from your notebook — it stays in the repository.
+
+#### Running it every day, automatically
+
+`scripts/sync_notebook.cmd` is the entry point of the scheduled task. It carries the project path and the `uv` path, so the Task Scheduler only needs to know one file. The output goes to `logs/sync-task.log` — no console window, and the history of the runs is always there.
+
+Create the task in **Task Scheduler** (`taskschd.msc`) with **Create Task** (not the basic one):
+
+| Tab | Setting |
+| --- | --- |
+| Triggers | New → *At log on of* your user → delay **30 seconds** (the network needs a moment) |
+| Actions | New → *Start a program* → `…\leetcode-analytics-automation\scripts\sync_notebook.cmd` → *Start in*: `…\leetcode-analytics-automation` |
+| Conditions | Uncheck *Start only if the computer is on AC power*; check *Start only if a network connection is available* |
+| Settings | Check *Allow the task to be run on demand*; *If the task fails, restart every* **1 minute**, *up to* **3 times** |
+
+A failed run is almost always the network not being up yet: the restart rule covers it.
 
 ### Recovering missed days
 
@@ -142,13 +157,22 @@ Backfill detects dates without a `daily_challenges` row, fetches the monthly his
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `LEETCODE_DB_URL` | `postgresql://leetcode:leetcode_local_dev@localhost:5432/leetcode_analytics` | Operational database |
+| `LEETCODE_DB_URL` | `postgresql://leetcode:leetcode_local_dev@localhost:5432/leetcode_analytics` | Operational database (Neon in production) |
 | `LEETCODE_TEST_DB_URL` | derived from `LEETCODE_DB_URL` | Separate database used by the tests |
 | `LEETCODE_OUTPUT_DIR` | `<user>/Problem-Solving/LeetCode` | Where the solution files live |
 | `LEETCODE_DB_TIMEOUT` | `10` | Seconds to wait for the database |
 | `LEETCODE_BACKFILL_DAYS` | `60` | Lookback window when `--since` is omitted |
 
-On the notebook, the connection string lives in a local `.env` file (copy `.env.example`). It is gitignored, and a real environment variable always wins over it — so the GitHub Actions secret is never overridden by an accidental local file. While the Neon line in the `.env` is commented, the local Docker database is used.
+On the notebook, the connection string lives in a local `.env` file (copy `.env.example`). It is gitignored, and a real environment variable always wins over it — so the GitHub Actions secret is never overridden by an accidental local file.
+
+The operational database and the test database are **different servers on purpose**:
+
+```text
+LEETCODE_DB_URL      = Neon            ← the pipeline and the sync
+LEETCODE_TEST_DB_URL = Docker          ← the test suite
+```
+
+The test database is created on the server named by `LEETCODE_TEST_DB_URL`, through the `postgres` maintenance database. This matters because the Neon free plan does not allow `CREATE DATABASE`: with the split above, `uv run pytest` still runs the whole suite locally. Docker only needs to be up when you are testing (`docker compose up -d`).
 
 ### Database tasks
 

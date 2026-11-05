@@ -56,6 +56,7 @@
 - [x] Deterministic solution folder (sorted topic), so a re-run never duplicates a file
 - [x] Rebase before pushing the generated solutions (a rejected push used to lose the files)
 - [x] The solved marker (`# Solved`) and the notebook sync (`scripts/sync.py`)
+- [x] `scripts/sync_notebook.cmd`: the entry point of the scheduled task, with the paths and the log file
 - [ ] `--conclude <id>`: the marker already closes a challenge automatically; the command is only useful to close one by hand
 
 ## Later
@@ -63,4 +64,4 @@
 - [ ] Scheduled database backup
 - [ ] A dashboard over `v_resolution`: filters by date, difficulty and topic, plus the statistics of the solved exercises
 - [ ] Consider per-run retry budget for transient LeetCode failures
-- [ ] The Windows Task Scheduler entry that runs `scripts/sync.py` at the first login of the day
+- [ ] **Create the Windows Task Scheduler entry** (manual, one time): trigger *At log on* with a 30s delay, action `scripts\sync_notebook.cmd`, no AC-power condition, restart every 1 minute up to 3 times. The README has the full table.
