@@ -2,7 +2,7 @@
 
 The output folder and the paths are configurable with environment
 variables, so the project does not depend on a fixed folder layout and
-can run inside Docker or Airflow without changes.
+can run locally or in GitHub Actions without changes.
 """
 
 import os

@@ -1,5 +1,7 @@
 """Tests for the generation of the solution file."""
 
+from pathlib import Path
+
 from scripts.generator import (
     clean_html,
     determine_file_path,
@@ -91,6 +93,25 @@ class TestGenerateFile:
         assert "inputs1 = {'s': 'dog'}" in content
         assert "solution.minOperations(**inputs1)" in content
         assert "exec(" not in content
+
+    def test_the_header_says_the_examples_are_about_to_run(
+        self, sample_challenge, temp_output_dir
+    ):
+        path = generate_daily_file(sample_challenge)
+        content = path and Path(path).read_text(encoding="utf-8")
+        assert (
+            "Running the examples extracted from the problem statement:"
+            in content
+        )
+        assert "Configure your tests" not in content
+
+    def test_the_header_asks_for_manual_tests_when_there_is_none(
+        self, sample_challenge, temp_output_dir
+    ):
+        sample_challenge["content"] = "<p>There is no example here.</p>"
+        path = generate_daily_file(sample_challenge)
+        content = path and Path(path).read_text(encoding="utf-8")
+        assert "No runnable example found — add your manual tests below:" in content
 
     def test_never_overwrites_an_existing_file(self, sample_challenge, temp_output_dir):
         path = generate_daily_file(sample_challenge)

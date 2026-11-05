@@ -2,7 +2,7 @@
 
 The operational database is PostgreSQL (docs/architecture.md, section 21).
 The connection is configured with environment variables so the same code
-runs locally, in Docker and in a future Airflow environment.
+runs locally, in Docker and in GitHub Actions.
 """
 
 import os

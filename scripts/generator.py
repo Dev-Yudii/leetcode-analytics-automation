@@ -116,9 +116,15 @@ def determine_file_path(challenge_data) -> Path:
 
 
 def _build_test_lines(challenge_data, method_name):
-    """Build the local test block of the generated file."""
+    """Build the local test block of the generated file.
+
+    Returns the lines and whether any of them actually runs: the header
+    of the file tells the user what is about to happen, and that depends
+    on whether there is something to run.
+    """
     raw_examples = extract_inputs(challenge_data.get("content"))
     test_lines = []
+    runnable = False
 
     for index, (raw_input, raw_output) in enumerate(raw_examples, 1):
         parsed = parse_input(raw_input)
@@ -145,12 +151,13 @@ def _build_test_lines(challenge_data, method_name):
             f"    print(f'Test {index} Result:', {call}, ' | Expected:', {expected_literal})"
         )
         test_lines.append("")
+        runnable = True
 
     if not test_lines:
         test_lines.append("    # No explicit examples found. Add your manual tests below:")
         test_lines.append(f"    # print(solution.{method_name}())")
 
-    return test_lines
+    return test_lines, runnable
 
 
 def _build_code_block(code_snippet, method_name):
@@ -187,7 +194,16 @@ def generate_daily_file(challenge_data, file_path=None) -> str:
     method_name = parse_function_call(challenge_data.get("code_snippet") or "")
     topics_str = ", ".join(challenge_data.get("topics") or [])
     code_block = _build_code_block(challenge_data.get("code_snippet"), method_name)
-    test_lines = _build_test_lines(challenge_data, method_name)
+    test_lines, has_runnable_tests = _build_test_lines(challenge_data, method_name)
+
+    # The header says what running the file is about to do. The tests
+    # below come from the problem statement, so there is nothing to
+    # configure — only something to write when the statement has no
+    # example that could be translated.
+    if has_runnable_tests:
+        test_header = "Running the examples extracted from the problem statement:"
+    else:
+        test_header = "No runnable example found — add your manual tests below:"
 
     # Build the blueprint layout for daily practice
     now = datetime.now().astimezone()
@@ -208,7 +224,7 @@ Tags:
 
 if __name__ == "__main__":
     solution = Solution()
-    print("Script generated! Configure your tests below:")
+    print("{test_header}")
     print("-" * 40)
 {"\n".join(test_lines)}
 """
