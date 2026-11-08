@@ -138,5 +138,9 @@
   {
     "id": 35,
     "name": "Simulation"
+  },
+  {
+    "id": 36,
+    "name": "Counting"
   }
 ]
