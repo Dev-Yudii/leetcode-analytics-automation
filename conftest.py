@@ -22,6 +22,10 @@ if str(PROJECT_ROOT) not in sys.path:
 
 TEST_DB_NAME = "leetcode_analytics_test"
 
+# The probe asks the server once, for the whole session. Its timeout is
+# the price of the entire suite, not of a single test, so it is short.
+PROBE_TIMEOUT = 3
+
 
 def _database_name(url: str) -> str:
     """The database a connection string points at."""
@@ -82,8 +86,44 @@ def temp_db_path(tmp_path, monkeypatch):
     return database
 
 
+@pytest.fixture(scope="session")
+def postgres_probe():
+    """Ask the test server once, for the whole session.
+
+    The fixture below is function-scoped: without this probe, every
+    test that needs the database pays the connection timeout on its
+    own. With the Docker container down, the suite spent ten seconds
+    per test just to skip it — and the answer was always the same.
+
+    It returns the reason why the server did not answer, or None when
+    it answered.
+    """
+    import psycopg
+
+    from scripts.db_utils import get_db_url
+    from scripts.redact import redact
+
+    base_url = get_db_url()
+    test_url = os.environ.get("LEETCODE_TEST_DB_URL") or _url_with_database(
+        base_url, TEST_DB_NAME
+    )
+    # The maintenance database always exists, and it is the one that is
+    # allowed to create another database.
+    admin_url = _url_with_database(test_url, "postgres")
+
+    try:
+        with psycopg.connect(
+            admin_url, autocommit=True, connect_timeout=PROBE_TIMEOUT
+        ):
+            return None
+    except psycopg.Error as e:
+        # The message of a driver error can carry the connection
+        # string: it is redacted before it reaches the console.
+        return redact(e)
+
+
 @pytest.fixture
-def postgres_url(monkeypatch):
+def postgres_url(monkeypatch, postgres_probe):
     """Point the tests at a separate PostgreSQL database, empty.
 
     The test database is created on the server of `LEETCODE_TEST_DB_URL`,
@@ -96,6 +136,10 @@ def postgres_url(monkeypatch):
     import psycopg
 
     from scripts.db_utils import get_db_url
+    from scripts.redact import redact
+
+    if postgres_probe is not None:
+        pytest.skip(f"PostgreSQL is not reachable: {postgres_probe}")
 
     base_url = get_db_url()
     test_url = os.environ.get("LEETCODE_TEST_DB_URL") or _url_with_database(
@@ -114,14 +158,14 @@ def postgres_url(monkeypatch):
             if not exists:
                 conn.execute(f'CREATE DATABASE "{test_db_name}"')
     except psycopg.Error as e:
-        pytest.skip(f"PostgreSQL is not reachable: {e}")
+        pytest.skip(f"PostgreSQL is not reachable: {redact(e)}")
 
     try:
         with psycopg.connect(test_url, autocommit=True, connect_timeout=5) as conn:
             conn.execute("DROP SCHEMA public CASCADE")
             conn.execute("CREATE SCHEMA public")
     except psycopg.Error as e:
-        pytest.skip(f"the test database is not usable: {e}")
+        pytest.skip(f"the test database is not usable: {redact(e)}")
 
     monkeypatch.setenv("LEETCODE_DB_URL", test_url)
     return test_url

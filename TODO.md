@@ -21,6 +21,7 @@
 - [x] `COMPLETED.md`: the index of the completed challenges, with the resolution time and the absolute links (2026-11-08)
 - [x] The application role `leetcode_app`: the pipeline no longer runs as the database owner (2026-11-05)
 - [x] The credential hardening: the owner connection leaves `.env`, the diagnostics show the shape and never the secret (2026-11-05)
+- [x] The test suite asks the test server once: the database tests skip in seconds when Docker is down (2026-11-08)
 
 ## Dated reminders
 
@@ -70,4 +71,4 @@
 - [ ] A dashboard over `v_resolution`: filters by date, difficulty and topic, plus the statistics of the solved exercises
 - [ ] Consider per-run retry budget for transient LeetCode failures
 - [ ] **Create the Windows Task Scheduler entry** (manual, one time): trigger *Daily* at **06:00**, action `scripts\sync_notebook.cmd`, no AC-power condition, "run as soon as possible after a missed start", "do not start a new instance", restart every 1 minute up to 3 times. The README has the full table. Registering it from a script needs an **elevated** PowerShell — the root of the Task Scheduler refuses a standard user. The script is `scripts\register_sync_task.ps1`; the alternative is creating it by hand in the GUI.
-- [ ] Update the GitHub Actions secret `LEETCODE_DB_URL` to the `leetcode_app` connection string (the pipeline now uses the application role, not the owner). The `SOLUTIONS_REPO_TOKEN` is a different credential and does not need to change.
+- [x] Update the GitHub Actions secret `LEETCODE_DB_URL` to the `leetcode_app` connection string (the pipeline now uses the application role, not the owner). The `SOLUTIONS_REPO_TOKEN` is a different credential and does not need to change. (2026-11-08 — confirmed: the runs of 2026-11-06, 11-07 and 11-08 all succeeded after the owner password was rotated, and the objects in Neon belong to `leetcode_app`.)

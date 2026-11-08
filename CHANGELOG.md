@@ -40,6 +40,7 @@ This file goal is tracking the project evolution. I'll use it to note down new f
 - **The two indexes point at each other.** The open one says where the solved ones are, and the other way around.
 - **The comment of `sync_notebook.cmd` was stale.** It still said the task runs at the first logon of the day; the trigger is daily at 06:00.
 - **Registering the scheduled task from a script needs an elevated prompt.** The root of the Task Scheduler refuses a programmatic registration for a standard user (*Access denied*). The COM API, `Register-ScheduledTask` and `schtasks /create` all hit the same wall; the task has to be created from an Administrator PowerShell or by hand in the GUI.
+- **The suite asks the test server once.** The fixture that points the tests at the test database is function-scoped, so each of the fifty database tests paid the connection timeout on its own: with the Docker container down, the suite spent ten seconds per test — eight and a half minutes — waiting for an answer that was never coming. The server is now probed once per session and every test after it skips immediately. The host of the test connection is the IP instead of `localhost`, because libpq resolves the name to two addresses and its timeout is per address. With the container down, the suite now finishes in six seconds.
 
 
 ## 2026-11-04 (Occurrence ledger + remote runner)

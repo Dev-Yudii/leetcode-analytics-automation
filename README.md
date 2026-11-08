@@ -207,6 +207,11 @@ LEETCODE_TEST_DB_URL = Docker          ← the test suite
 
 The test database is created on the server named by `LEETCODE_TEST_DB_URL`, through the `postgres` maintenance database. This matters because the Neon free plan does not allow `CREATE DATABASE`: with the split above, `uv run pytest` still runs the whole suite locally. Docker only needs to be up when you are testing (`docker compose up -d`).
 
+When the test server is not answering, the database tests are **skipped** — the suite says so and finishes, it does not hang. Two details make that cheap:
+
+- the host of `LEETCODE_TEST_DB_URL` is the IP (`127.0.0.1`), not `localhost`: libpq resolves the name to two addresses and its timeout is per address, so a name that is not answering costs twice the wait;
+- the server is asked **once per session**: the probe runs before the first database test, and every test after it skips immediately. Without the probe, each of the fifty database tests paid the timeout on its own — the suite spent ten seconds per test, waiting for an answer that was never coming.
+
 ### A credential is never printed
 
 The rule of the project: **a credential is never printed, the diagnostic shows the shape.** A connection string that reaches a terminal reaches the transcript, and a credential in the transcript is a credential that has to be rotated.
