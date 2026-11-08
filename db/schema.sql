@@ -34,25 +34,6 @@ ALTER TABLE problems ADD COLUMN IF NOT EXISTS generated_at TIMESTAMPTZ;
 ALTER TABLE problems ADD COLUMN IF NOT EXISTS collected_at TIMESTAMPTZ;
 ALTER TABLE problems ADD COLUMN IF NOT EXISTS solved_at TIMESTAMPTZ;
 
--- How long a challenge waited for the user: the resolution time starts
--- when the file reached the notebook and ends when it was marked solved.
-CREATE OR REPLACE VIEW v_resolution AS
-SELECT
-    p.id,
-    p.title,
-    p.difficulty,
-    p.challenge_date,
-    p.file_path,
-    p.status,
-    p.generated_at,
-    p.collected_at,
-    p.solved_at,
-    EXTRACT(EPOCH FROM (p.solved_at - p.collected_at)) / 3600.0 AS resolution_hours,
-    EXTRACT(EPOCH FROM (p.solved_at - p.collected_at)) / 86400.0 AS resolution_days,
-    EXTRACT(EPOCH FROM (p.collected_at - p.generated_at)) / 3600.0 AS cloud_latency_hours
-FROM problems p
-WHERE p.solved_at IS NOT NULL AND p.collected_at IS NOT NULL;
-
 -- Which problem was the Daily Challenge on each date. A problem can be
 -- reused as a Daily Challenge on another day (§20), so this occurrence
 -- ledger is separate from the problem catalog.
@@ -68,6 +49,33 @@ CREATE TABLE IF NOT EXISTS problem_topics (
     topic_id   INTEGER NOT NULL REFERENCES topics(id),
     PRIMARY KEY (problem_id, topic_id)
 );
+
+-- How long a challenge waited for the user: the resolution time starts
+-- when the file reached the notebook and ends when it was marked solved.
+--
+-- The view is declared after `problem_topics` on purpose: it joins the
+-- topics, and a fresh database has to reach that table before the view
+-- can be created. The file is read from the top to the bottom.
+CREATE OR REPLACE VIEW v_resolution AS
+SELECT
+    p.id,
+    p.title,
+    p.difficulty,
+    p.challenge_date,
+    p.file_path,
+    p.status,
+    p.generated_at,
+    p.collected_at,
+    p.solved_at,
+    EXTRACT(EPOCH FROM (p.solved_at - p.collected_at)) / 3600.0 AS resolution_hours,
+    EXTRACT(EPOCH FROM (p.solved_at - p.collected_at)) / 86400.0 AS resolution_days,
+    EXTRACT(EPOCH FROM (p.collected_at - p.generated_at)) / 3600.0 AS cloud_latency_hours,
+    COALESCE(string_agg(t.name, ', ' ORDER BY t.name), '') AS topics
+FROM problems p
+LEFT JOIN problem_topics pt ON pt.problem_id = p.id
+LEFT JOIN topics t ON t.id = pt.topic_id
+WHERE p.solved_at IS NOT NULL AND p.collected_at IS NOT NULL
+GROUP BY p.id;
 
 -- One row per collection run: tells "not collected" from "collection failed" (§19).
 CREATE TABLE IF NOT EXISTS collection_runs (

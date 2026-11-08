@@ -345,6 +345,30 @@ def get_open_problems() -> list[dict]:
         raise _translate(e) from e
 
 
+def get_completed_problems() -> list[dict]:
+    """Problems that are already solved, most recent first.
+
+    The index of the completed challenges reads the same view that a
+    dashboard will read: `v_resolution`. The view carries the topics
+    and the resolution time, so the index needs a single query.
+    """
+    ensure_schema()
+    try:
+        with get_connection() as conn:
+            with conn.cursor(row_factory=dict_row) as cursor:
+                cursor.execute(
+                    "SELECT id, title, difficulty, challenge_date, file_path,"
+                    " status, generated_at, collected_at, solved_at,"
+                    " resolution_hours, resolution_days, cloud_latency_hours,"
+                    " topics"
+                    " FROM v_resolution"
+                    " ORDER BY solved_at DESC, id DESC"
+                )
+                return cursor.fetchall()
+    except Exception as e:
+        raise _translate(e) from e
+
+
 def sync_topics(topic_ids: dict) -> int:
     """Write the topics to the database using the IDs of the versioned catalog.
 

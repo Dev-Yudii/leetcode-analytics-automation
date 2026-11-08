@@ -82,6 +82,10 @@ def render_pending_index(
         lines.append(
             "The next Daily Challenge arrives here when the cloud publishes it."
         )
+        lines.append("")
+        lines.append(
+            "The challenges already solved are in [COMPLETED.md](COMPLETED.md)."
+        )
         return "\n".join(lines) + "\n"
 
     lines.append("| Collected | ID | Title | Difficulty | Topics | Waiting | File |")
@@ -105,6 +109,10 @@ def render_pending_index(
     lines.append(
         f"{len(rows)} challenge(s) waiting. Solve one, add the `# Solved` line"
         " at the end of the file, and the next sync sends it and closes it."
+    )
+    lines.append("")
+    lines.append(
+        "The challenges already solved are in [COMPLETED.md](COMPLETED.md)."
     )
     return "\n".join(lines) + "\n"
 

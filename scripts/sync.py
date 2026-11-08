@@ -28,6 +28,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from scripts.completed_index import (
+    COMPLETED_FILE,
+    render_completed_index,
+    remote_repository,
+    write_completed_index,
+)
 from scripts.generator import generate_daily_file
 from scripts.leetcode_client import get_challenge_for_date, get_daily_challenge
 from scripts.paths import get_output_path
@@ -35,6 +41,7 @@ from scripts.pending_index import PENDING_FILE, render_pending_index, write_pend
 from scripts.persistence import (
     PersistenceError,
     ensure_schema,
+    get_completed_problems,
     get_open_problems,
     get_problem,
     mark_solved,
@@ -322,6 +329,60 @@ def _missing_today(result: SyncResult, logger) -> str | None:
     return label
 
 
+def _update_completed_index(repo: Path, result: SyncResult, logger, dry_run: bool) -> None:
+    """Regenerate the index of the completed challenges and publish it.
+
+    It runs after the solutions are pushed, so a challenge closed in
+    this very run shows up in the index.
+
+    The links are absolute: a solved file leaves the working tree, so
+    the relative path would point to nothing in the local clone. The
+    repository is read from the git remote, not hardcoded.
+    """
+    try:
+        rows = get_completed_problems()
+    except PersistenceError as e:
+        result.warnings.append(
+            f"could not read the ledger for the completed index: {e}"
+        )
+        return
+
+    repository, repository_url = remote_repository(repo)
+    content = render_completed_index(
+        rows, repository=repository, repository_url=repository_url
+    )
+
+    if dry_run:
+        logger.info(
+            f"[dry-run] would update {COMPLETED_FILE} ({len(rows)} completed challenge(s))"
+        )
+        return
+
+    try:
+        changed = write_completed_index(repo, content)
+    except OSError as e:
+        result.warnings.append(f"could not write {COMPLETED_FILE}: {e}")
+        logger.error(f"Could not write {COMPLETED_FILE}: {e}")
+        return
+
+    if changed:
+        logger.info(f"Updated {COMPLETED_FILE} — {len(rows)} completed challenge(s)")
+    else:
+        logger.info(
+            f"{COMPLETED_FILE} is up to date ({len(rows)} completed challenge(s))"
+        )
+
+    try:
+        commit_and_push(
+            repo,
+            [COMPLETED_FILE],
+            "chore: update the completed challenges index",
+        )
+    except SyncError as e:
+        result.warnings.append(f"could not push {COMPLETED_FILE}: {e}")
+        logger.error(f"Could not push {COMPLETED_FILE}: {e}")
+
+
 def _update_pending_index(repo: Path, result: SyncResult, logger, dry_run: bool) -> None:
     """Regenerate the index of the open challenges and publish it.
 
@@ -413,6 +474,7 @@ def run_sync(logger=None, repo=None, root=None, dry_run: bool = False) -> SyncRe
     _push_solved_files(repo, root, result, logger, dry_run)
     _rebuild_missing(repo, root, result, logger, dry_run)
     _update_pending_index(repo, result, logger, dry_run)
+    _update_completed_index(repo, result, logger, dry_run)
 
     result.status = DEGRADED if result.warnings else OK
     result.exit_code = EXIT_DEGRADED if result.warnings else EXIT_OK

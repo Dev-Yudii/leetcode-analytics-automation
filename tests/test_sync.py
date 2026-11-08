@@ -357,3 +357,143 @@ class TestPendingIndex:
 
         index = (repo / "PENDING.md").read_text(encoding="utf-8")
         assert "9999" in index
+
+
+class TestCompletedIndex:
+    """The index of the completed challenges, at the root of the repository."""
+
+    def test_the_index_is_created_and_published(
+        self, tmp_path, monkeypatch, sample_challenge, temp_catalog
+    ):
+        remote = make_remote(tmp_path)
+        repo = make_repo(tmp_path, remote)
+        monkeypatch.setenv("LEETCODE_OUTPUT_DIR", str(repo))
+        seed_problem(sample_challenge)
+
+        target = repo / SOLVED_FILE
+        target.write_text(
+            target.read_text(encoding="utf-8") + "# Solved\n", encoding="utf-8"
+        )
+
+        run_sync(logger=FakeLogger(), repo=repo)
+
+        index = (repo / "COMPLETED.md").read_text(encoding="utf-8")
+        assert "# Completed challenges" in index
+        assert "3863" in index
+        assert "Minimum Operations to Sort a String" in index
+
+        remote_files = subprocess.run(
+            ["git", "-C", str(remote), "ls-tree", "-r", "--name-only", "main"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=True,
+        ).stdout
+        assert "COMPLETED.md" in remote_files
+
+    def test_a_solved_challenge_leaves_the_open_index(
+        self, tmp_path, monkeypatch, sample_challenge, temp_catalog
+    ):
+        remote = make_remote(tmp_path)
+        repo = make_repo(tmp_path, remote)
+        monkeypatch.setenv("LEETCODE_OUTPUT_DIR", str(repo))
+        seed_problem(sample_challenge)
+
+        target = repo / SOLVED_FILE
+        target.write_text(
+            target.read_text(encoding="utf-8") + "# Solved\n", encoding="utf-8"
+        )
+
+        run_sync(logger=FakeLogger(), repo=repo)
+
+        open_index = (repo / "PENDING.md").read_text(encoding="utf-8")
+        assert "3863" not in open_index
+
+        completed = (repo / "COMPLETED.md").read_text(encoding="utf-8")
+        assert "3863" in completed
+
+    def test_the_link_is_absolute_because_the_file_left_the_notebook(
+        self, tmp_path, monkeypatch, sample_challenge, temp_catalog
+    ):
+        remote = make_remote(tmp_path)
+        repo = make_repo(tmp_path, remote)
+        monkeypatch.setenv("LEETCODE_OUTPUT_DIR", str(repo))
+        seed_problem(sample_challenge)
+
+        # the remote of the test is a local folder, not a web address
+        import scripts.sync as sync_module
+
+        monkeypatch.setattr(
+            sync_module,
+            "remote_repository",
+            lambda path: (
+                "Dev-Yudii/leetcode",
+                "https://github.com/Dev-Yudii/leetcode",
+            ),
+        )
+
+        target = repo / SOLVED_FILE
+        target.write_text(
+            target.read_text(encoding="utf-8") + "# Solved\n", encoding="utf-8"
+        )
+
+        run_sync(logger=FakeLogger(), repo=repo)
+
+        # the file is gone from the working tree...
+        assert not target.exists()
+
+        # ...so the index links to the repository, not to the local path
+        completed = (repo / "COMPLETED.md").read_text(encoding="utf-8")
+        assert f"]({SOLVED_FILE})" not in completed
+        assert f"https://github.com/Dev-Yudii/leetcode/blob/main/{SOLVED_FILE}" in completed
+        assert "Dev-Yudii/leetcode" in completed
+
+    def test_an_open_challenge_is_not_in_the_completed_index(
+        self, tmp_path, monkeypatch, sample_challenge, temp_catalog
+    ):
+        remote = make_remote(tmp_path)
+        repo = make_repo(tmp_path, remote)
+        monkeypatch.setenv("LEETCODE_OUTPUT_DIR", str(repo))
+        seed_problem(sample_challenge)
+
+        run_sync(logger=FakeLogger(), repo=repo)
+
+        completed = (repo / "COMPLETED.md").read_text(encoding="utf-8")
+        assert "Nothing completed yet." in completed
+        assert "3863" not in completed
+
+    def test_the_index_is_not_committed_again_when_nothing_changed(
+        self, tmp_path, monkeypatch, sample_challenge, temp_catalog
+    ):
+        remote = make_remote(tmp_path)
+        repo = make_repo(tmp_path, remote)
+        monkeypatch.setenv("LEETCODE_OUTPUT_DIR", str(repo))
+        seed_problem(sample_challenge)
+
+        target = repo / SOLVED_FILE
+        target.write_text(
+            target.read_text(encoding="utf-8") + "# Solved\n", encoding="utf-8"
+        )
+
+        run_sync(logger=FakeLogger(), repo=repo)
+        before = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=True,
+        ).stdout.strip()
+
+        run_sync(logger=FakeLogger(), repo=repo)
+        after = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=True,
+        ).stdout.strip()
+
+        assert before == after
