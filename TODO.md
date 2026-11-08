@@ -18,6 +18,7 @@
 - [x] Notebook sync: the cloud collects, the notebook solves, the ledger tracks (2026-11-05)
 - [x] Resolution timing: `generated_at`, `collected_at`, `solved_at` + `v_resolution` view (2026-11-05)
 - [x] `PENDING.md`: the index of the open challenges at the root of the solutions repository (2026-11-05)
+- [x] `COMPLETED.md`: the index of the completed challenges, with the resolution time and the absolute links (2026-11-08)
 - [x] The application role `leetcode_app`: the pipeline no longer runs as the database owner (2026-11-05)
 - [x] The credential hardening: the owner connection leaves `.env`, the diagnostics show the shape and never the secret (2026-11-05)
 

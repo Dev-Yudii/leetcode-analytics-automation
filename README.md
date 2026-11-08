@@ -138,6 +138,20 @@ A solved file leaves the working tree, so the open challenges end up scattered a
 
 It is regenerated at the end of every sync and published to the repository, so it is never stale. It also says when the challenge of the day is missing from the ledger — that means the cloud is late, not that there is nothing to do.
 
+#### Finding what is already done
+
+`COMPLETED.md` is the other half of the index, at the root of the same repository: every challenge that is already solved, when it was solved and how long it took.
+
+```markdown
+| Challenge | Solved | ID | Title | Difficulty | Topics | Resolution | Repository | File |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 2026-11-05 | 2026-11-05 | 1385 | Find the Distance Value… | Easy | Array, Sorting | 5m 41s | Dev-Yudii/leetcode | [array/1385_….py](https://github.com/Dev-Yudii/leetcode/blob/main/array/1385_….py) |
+```
+
+The links are **absolute**, and the repository is named in its own column, for a reason that is not cosmetic: a solved file leaves the working tree, so the relative path of `PENDING.md` would point to nothing in the local clone. The index links to where the file actually is. The repository is read from the git remote, not hardcoded.
+
+The `Resolution` column is the metric the whole project exists for: the time between the file reaching the notebook and the challenge being marked as solved.
+
 #### Running it every day, automatically
 
 `scripts/sync_notebook.cmd` is the entry point of the scheduled task. It carries the project path and the `uv` path, so the Task Scheduler only needs to know one file. The output goes to `logs/sync-task.log` — no console window, and the history of the runs is always there.

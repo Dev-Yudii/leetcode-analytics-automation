@@ -1012,6 +1012,27 @@ The rules:
 
 The index lives in the solutions repository, but the code that writes it lives in the automation project. The separation is deliberate: the solutions repository holds content and no code, so the database credentials stay in one place.
 
+## 25.4 The index of the completed challenges
+
+`PENDING.md` has a counterpart: `COMPLETED.md`, at the root of the same repository, with every challenge that is already solved.
+
+```markdown
+| Challenge | Solved | ID | Title | Difficulty | Topics | Resolution | Repository | File |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 2026-11-05 | 2026-11-05 | 1385 | Find the Distance Value… | Easy | Array, Sorting | 5m 41s | Dev-Yudii/leetcode | [array/1385_….py](https://github.com/Dev-Yudii/leetcode/blob/main/array/1385_….py) |
+```
+
+It follows the same rules as the open index: the **ledger is the source of truth**, the index is a projection of it, and it is **regenerated at the end of every sync** and published.
+
+Two things make it different from the open index, and both come from the same fact:
+
+* **the links are absolute.** A solved file leaves the working tree — the sync removes it through the git `skip-worktree` flag. A relative path would point to nothing in the local clone, while the absolute URL of the repository points to the file wherever the reader is. The repository and the URL are read from the **git remote**, not hardcoded, so renaming the repository does not break the index;
+* **the repository is a column of its own.** The index answers "where is this file kept?" without the reader having to infer it from the URL.
+
+The `Resolution` column is the metric of the project: `solved_at - collected_at`, the time between the file reaching the notebook and the challenge being marked as solved. The `v_resolution` view carries it — and the topics, aggregated in the view itself, so the index needs a single query.
+
+The two indexes point at each other: the open one says where the solved ones are, and the other way around.
+
 ---
 
 # 26. Backup and persistence
