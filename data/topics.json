@@ -146,5 +146,17 @@
   {
     "id": 37,
     "name": "Ordered Set"
+  },
+  {
+    "id": 38,
+    "name": "Queue"
+  },
+  {
+    "id": 39,
+    "name": "Monotonic Stack"
+  },
+  {
+    "id": 40,
+    "name": "Monotonic Queue"
   }
 ]
