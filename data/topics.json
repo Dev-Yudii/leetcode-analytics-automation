@@ -158,5 +158,13 @@
   {
     "id": 40,
     "name": "Monotonic Queue"
+  },
+  {
+    "id": 41,
+    "name": "Design"
+  },
+  {
+    "id": 42,
+    "name": "Data Stream"
   }
 ]
