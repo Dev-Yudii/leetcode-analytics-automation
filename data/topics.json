@@ -170,5 +170,17 @@
   {
     "id": 43,
     "name": "Number Theory"
+  },
+  {
+    "id": 44,
+    "name": "Rolling Hash"
+  },
+  {
+    "id": 45,
+    "name": "Suffix Array"
+  },
+  {
+    "id": 46,
+    "name": "Hash Function"
   }
 ]
